@@ -25,6 +25,7 @@ import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationMarkup;
 import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.PDAppearanceContentStream;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 
 /**
  * Handler to generate the ink annotations appearance.
@@ -56,13 +57,44 @@ public class PDInkAppearanceHandler extends PDAbstractAppearanceHandler
     public void generateNormalAppearance()
     {
         PDAnnotationMarkup ink = (PDAnnotationMarkup) getAnnotation();
-        // PDF spec does not mention /Border for ink annotations, but it is used if /BS is not available
-        AnnotationBorder ab = AnnotationBorder.getAnnotationBorder(ink, ink.getBorderStyle());
         PDColor color = ink.getColor();
-        if (color == null || color.getComponents().length == 0 || Float.compare(ab.width, 0) == 0)
+        if (color == null || color.getComponents().length == 0)
         {
             return;
         }
+        // PDF spec does not mention /Border for ink annotations, but it is used if /BS is not available
+        AnnotationBorder ab = AnnotationBorder.getAnnotationBorder(ink, ink.getBorderStyle());
+        if (Float.compare(ab.width, 0) == 0)
+        {
+            return;
+        }
+
+        // Adjust rectangle even if not empty
+        // file from PDF.js issue 13447
+        //TODO in a class structure this should be overridable
+        float minX = Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE;
+        float maxX = Float.MIN_VALUE;
+        float maxY = Float.MIN_VALUE;
+        for (float[] pathArray : ink.getInkList())
+        {
+            int nPoints = pathArray.length / 2;
+            for (int i = 0; i < nPoints; ++i)
+            {
+                float x = pathArray[i * 2];
+                float y = pathArray[i * 2 + 1];
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+            }
+        }
+        PDRectangle rect = ink.getRectangle();
+        rect.setLowerLeftX(Math.min(minX - ab.width * 2, rect.getLowerLeftX()));
+        rect.setLowerLeftY(Math.min(minY - ab.width * 2, rect.getLowerLeftY()));
+        rect.setUpperRightX(Math.max(maxX + ab.width * 2, rect.getUpperRightX()));
+        rect.setUpperRightY(Math.max(maxY + ab.width * 2, rect.getUpperRightY()));
+        ink.setRectangle(rect);
 
         PDAppearanceContentStream cs = null;
 

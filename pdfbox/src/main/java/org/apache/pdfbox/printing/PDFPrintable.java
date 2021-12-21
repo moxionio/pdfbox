@@ -31,6 +31,7 @@ import java.awt.print.PrinterIOException;
 import java.io.IOException;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageTree;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.rendering.RenderDestination;
@@ -42,7 +43,7 @@ import org.apache.pdfbox.rendering.RenderDestination;
  */
 public final class PDFPrintable implements Printable
 {
-    private final PDDocument document;
+    private final PDPageTree pageTree;
     private final PDFRenderer renderer;
     
     private final boolean showPageBorder;
@@ -112,8 +113,25 @@ public final class PDFPrintable implements Printable
     public PDFPrintable(PDDocument document, Scaling scaling, boolean showPageBorder, float dpi,
                         boolean center)
     {
-        this.document = document;
-        this.renderer = new PDFRenderer(document);
+        this(document, scaling, showPageBorder, dpi, center, new PDFRenderer(document));
+    }
+
+    /**
+     * Creates a new PDFPrintable with the given page scaling and with optional page borders shown.
+     * The image will be rasterized at the given DPI before being sent to the printer.
+     *
+     * @param document the document to print
+     * @param scaling page scaling policy
+     * @param showPageBorder true if page borders are to be printed
+     * @param dpi if non-zero then the image will be rasterized at the given DPI
+     * @param center true if the content is to be centered on the page (otherwise top-left).
+     * @param renderer the document renderer. Useful if {@link PDFRenderer} has been subclassed.
+     */
+    public PDFPrintable(PDDocument document, Scaling scaling, boolean showPageBorder, float dpi,
+                        boolean center, PDFRenderer renderer)
+    {
+        this.pageTree = document.getPages();
+        this.renderer = renderer;
         this.scaling = scaling;
         this.showPageBorder = showPageBorder;
         this.dpi = dpi;
@@ -174,7 +192,7 @@ public final class PDFPrintable implements Printable
     public int print(Graphics graphics, PageFormat pageFormat, int pageIndex)
             throws PrinterException
     {
-        if (pageIndex < 0 || pageIndex >= document.getNumberOfPages())
+        if (pageIndex < 0 || pageIndex >= pageTree.getCount())
         {
             return NO_SUCH_PAGE;
         }
@@ -182,7 +200,7 @@ public final class PDFPrintable implements Printable
         {
             Graphics2D graphics2D = (Graphics2D)graphics;
 
-            PDPage page = document.getPage(pageIndex);
+            PDPage page = pageTree.get(pageIndex);
             PDRectangle cropBox = getRotatedCropBox(page);
 
             // the imageable area is the area within the page margins

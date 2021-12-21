@@ -85,6 +85,8 @@ public final class DateConverter
         Calendar retval = null;
         if ((date != null) && (date.trim().length() > 0))
         {
+            date = date.trim();
+
             // these are the default values
             int month = 1;
             int day = 1;
@@ -103,7 +105,7 @@ public final class DateConverter
                 }
                 else if (date.startsWith("D:"))
                 {
-                    date = date.substring(2, date.length());
+                    date = date.substring(2);
                 }
 
                 date = date.replaceAll("[-:T]", "");
@@ -133,15 +135,8 @@ public final class DateConverter
                 int timeZonePos = 12;
                 if (date.length() - 12 > 5 || (date.length() - 12 == 3 && date.endsWith("Z")))
                 {
-                    if (date.length() >= 14)
-                    {
-                        second = Integer.parseInt(date.substring(12, 14));
-                    }
+                    second = Integer.parseInt(date.substring(12, 14));
                     timeZonePos = 14;
-                }
-                else
-                {
-                    second = 0;
                 }
 
                 if (date.length() >= (timeZonePos + 1))
@@ -200,11 +195,9 @@ public final class DateConverter
             catch (NumberFormatException e)
             {
 
-                // remove the arbitrary : in the timezone. SimpleDateFormat
-                // can't handle it
-                if (date.substring(date.length() - 3, date.length() - 2).equals(":")
-                        && (date.substring(date.length() - 6, date.length() - 5).equals("+") || date.substring(
-                                date.length() - 6, date.length() - 5).equals("-")))
+                // remove the arbitrary : in the timezone. SimpleDateFormat can't handle it
+                if (date.charAt(date.length() - 3) == ':' && 
+                    (date.charAt(date.length() - 6) == '+' || date.charAt(date.length() - 6) == '-'))
                 {
                     // that's a timezone string, remove the :
                     date = date.substring(0, date.length() - 3) + date.substring(date.length() - 2);
@@ -292,31 +285,31 @@ public final class DateConverter
         StringBuilder retval = new StringBuilder();
 
         retval.append(cal.get(Calendar.YEAR));
-        retval.append("-");
+        retval.append('-');
         retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.MONTH) + 1));
-        retval.append("-");
+        retval.append('-');
         retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.DAY_OF_MONTH)));
-        retval.append("T");
+        retval.append('T');
         retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.HOUR_OF_DAY)));
-        retval.append(":");
+        retval.append(':');
         retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.MINUTE)));
-        retval.append(":");
+        retval.append(':');
         retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.SECOND)));
         
         if (printMillis)
         {
-            retval.append(".");
+            retval.append('.');
             retval.append(String.format(Locale.US, "%03d", cal.get(Calendar.MILLISECOND)));
         }
 
         int timeZone = cal.get(Calendar.ZONE_OFFSET) + cal.get(Calendar.DST_OFFSET);
         if (timeZone < 0)
         {
-            retval.append("-");
+            retval.append('-');
         }
         else
         {
-            retval.append("+");
+            retval.append('+');
         }
         timeZone = Math.abs(timeZone);
         // milliseconds/1000 = seconds; seconds / 60 = minutes; minutes/60 = hours
@@ -324,15 +317,15 @@ public final class DateConverter
         int minutes = (timeZone - (hours * 1000 * 60 * 60)) / 1000 / 60;
         if (hours < 10)
         {
-            retval.append("0");
+            retval.append('0');
         }
-        retval.append(Integer.toString(hours));
-        retval.append(":");
+        retval.append(hours);
+        retval.append(':');
         if (minutes < 10)
         {
-            retval.append("0");
+            retval.append('0');
         }
-        retval.append(Integer.toString(minutes));
+        retval.append(minutes);
         return retval.toString();
     }
     
@@ -356,9 +349,10 @@ public final class DateConverter
         {
             for (int i = 1; i <= timeZoneMatcher.groupCount(); i++)
             {
-                if (timeZoneMatcher.group(i) != null)
+                String group = timeZoneMatcher.group(i);
+                if (group != null)
                 {
-                    timeZoneString = timeZoneMatcher.group(i);
+                    timeZoneString = group;
                 }
             }
         }

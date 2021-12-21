@@ -73,14 +73,14 @@ final class Type1Parser
     {
         if (bytes.length == 0)
         {
-            throw new IllegalArgumentException("byte[] is empty");
+            throw new IOException("ASCII segment of type 1 font is empty");
         }
 
         // %!FontType1-1.0
         // %!PS-AdobeFont-1.0
         if (bytes.length < 2 || (bytes[0] != '%' && bytes[1] != '!'))
         {
-            throw new IOException("Invalid start of ASCII segment");
+            throw new IOException("Invalid start of ASCII segment of type 1 font");
         }
 
         lexer = new Type1Lexer(bytes);
@@ -92,9 +92,9 @@ final class Type1Parser
             read(Token.LITERAL); // font name
             read(Token.NAME, "known");
             read(Token.START_PROC);
-            readProc();
+            readProcVoid();
             read(Token.START_PROC);
-            readProc();
+            readProcVoid();
             read(Token.NAME, "ifelse");
         }
 
@@ -253,7 +253,8 @@ final class Type1Parser
             }
             else
             {
-               throw new IOException("Expected INTEGER or REAL but got " + token.getKind());
+                throw new IOException("Expected INTEGER or REAL but got " + token +
+                        " at array position " + i);
             }
         }
         return numbers;
@@ -433,10 +434,10 @@ final class Type1Parser
             read(Token.NAME, "known");
 
             read(Token.START_PROC);
-            readProc();
+            readProcVoid();
 
             read(Token.START_PROC);
-            readProc();
+            readProcVoid();
 
             read(Token.NAME, "ifelse");
 
@@ -485,6 +486,33 @@ final class Type1Parser
         }
 
         return value;
+    }
+
+    /**
+     * Reads a procedure but without returning anything.
+     */
+    private void readProcVoid() throws IOException
+    {
+        int openProc = 1;
+        while (true)
+        {
+            if (lexer.peekToken().getKind() == Token.START_PROC)
+            {
+                openProc++;
+            }
+
+            Token token = lexer.nextToken();
+
+            if (token.getKind() == Token.END_PROC)
+            {
+                openProc--;
+                if (openProc == 0)
+                {
+                    break;
+                }
+            }
+        }
+        readMaybe(Token.NAME, "executeonly");
     }
 
     /**
@@ -561,6 +589,7 @@ final class Type1Parser
                 read(Token.NAME, "def");
                 read(Token.END_PROC);
                 readMaybe(Token.NAME, "executeonly");
+                readMaybe(Token.NAME, "readonly");
                 read(Token.NAME, "def");
             }
             else if ("NP".equals(key))
@@ -570,15 +599,17 @@ final class Type1Parser
                 read(Token.NAME);
                 read(Token.END_PROC);
                 readMaybe(Token.NAME, "executeonly");
+                readMaybe(Token.NAME, "readonly");
                 read(Token.NAME, "def");
             }
             else if ("RD".equals(key))
             {
                 // /RD {string currentfile exch readstring pop} bind executeonly def
                 read(Token.START_PROC);
-                readProc();
+                readProcVoid();
                 readMaybe(Token.NAME, "bind");                
                 readMaybe(Token.NAME, "executeonly");                
+                readMaybe(Token.NAME, "readonly");
                 read(Token.NAME, "def");
             }
             else

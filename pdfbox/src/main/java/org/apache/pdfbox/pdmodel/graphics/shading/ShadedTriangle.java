@@ -52,12 +52,13 @@ class ShadedTriangle
     /**
      * Constructor.
      *
-     * @param p an array of the 3 vertices of a triangle
+     * @param p an array of the 3 vertices of a triangle; the Point2D objects should not be modified
+     * by the caller.
      * @param c an array of color corresponding the vertex array p
      */
     ShadedTriangle(Point2D[] p, float[][] c)
     {
-        corner = p.clone();
+        corner = p.clone(); // yes this is a shallow clone
         color = c.clone();
         area = getArea(p[0], p[1], p[2]);
         degree = calcDeg(p);

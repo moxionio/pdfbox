@@ -99,22 +99,25 @@ public class PDPageLabels implements COSObjectable
     
     private void findLabels(PDNumberTreeNode node) throws IOException 
     {
+        List<PDNumberTreeNode> kids = node.getKids();
         if (node.getKids() != null) 
         {
-            List<PDNumberTreeNode> kids = node.getKids();
             for (PDNumberTreeNode kid : kids) 
             {
                 findLabels(kid);
             }
         }
-        else if (node.getNumbers() != null) 
+        else
         {
-            Map<Integer, COSObjectable> numbers = node.getNumbers();
-            for (Entry<Integer, COSObjectable> i : numbers.entrySet())
+            Map<Integer,COSObjectable> numbers = node.getNumbers();
+            if (numbers != null)
             {
-                if(i.getKey() >= 0)
+                for (Entry<Integer, COSObjectable> i : numbers.entrySet())
                 {
-                    labels.put(i.getKey(), (PDPageLabelRange) i.getValue());
+                    if (i.getKey() >= 0)
+                    {
+                        labels.put(i.getKey(), (PDPageLabelRange) i.getValue());
+                    }
                 }
             }
         }
@@ -226,14 +229,15 @@ public class PDPageLabels implements COSObjectable
      */
     public String[] getLabelsByPageIndices()
     {
-        final String[] map = new String[doc.getNumberOfPages()];
+        final int numberOfPages = doc.getNumberOfPages();
+        final String[] map = new String[numberOfPages];
         computeLabels(new LabelHandler()
         {
             @Override
             public void newLabel(int pageIndex, String label)
             {
-                if(pageIndex < doc.getNumberOfPages())
-                { 
+                if (pageIndex < numberOfPages)
+                {
                     map[pageIndex] = label;
                 }
             }
@@ -326,21 +330,22 @@ public class PDPageLabels implements COSObjectable
                 throw new NoSuchElementException();
             }
             StringBuilder buf = new StringBuilder();
-            if (labelInfo.getPrefix() != null)
+            String label = labelInfo.getPrefix();
+            if (label != null)
             {
-                String label = labelInfo.getPrefix();
                 // there may be some labels with some null bytes at the end
                 // which will lead to an incomplete output, see PDFBOX-1047
-                while (label.lastIndexOf(0) != -1)
+                int index = label.indexOf(0);
+                if (index > -1)
                 {
-                    label = label.substring(0, label.length()-1);
+                    label = label.substring(0, index);
                 }
                 buf.append(label);
             }
-            if (labelInfo.getStyle() != null)
+            String style = labelInfo.getStyle();
+            if (style != null)
             {
-                buf.append(getNumber(labelInfo.getStart() + currentPage,
-                        labelInfo.getStyle()));
+                buf.append(getNumber(labelInfo.getStart() + currentPage, style));
             }
             currentPage++;
             return buf.toString();

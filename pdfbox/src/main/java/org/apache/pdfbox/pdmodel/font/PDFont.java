@@ -117,7 +117,7 @@ public abstract class PDFont implements COSObjectable, PDFontLike
 
     private PDFontDescriptor loadFontDescriptor()
     {
-        COSDictionary fd = (COSDictionary) dict.getDictionaryObject(COSName.FONT_DESC);
+        COSDictionary fd = dict.getCOSDictionary(COSName.FONT_DESC);
         if (fd != null)
         {
             return new PDFontDescriptor(fd);
@@ -158,6 +158,7 @@ public abstract class PDFont implements COSObjectable, PDFontLike
                 {
                     // assume that if encoding is identity, then the reverse is also true
                     cmap = CMapManager.getPredefinedCMap(COSName.IDENTITY_H.getName());
+                    LOG.warn("Using predefined identity CMap instead");
                 }
             }
         }
@@ -622,5 +623,15 @@ public abstract class PDFont implements COSObjectable, PDFontLike
     public String toString()
     {
         return getClass().getSimpleName() + " " + getName();
+    }
+
+    /**
+     * Get the /ToUnicode CMap.
+     *
+     * @return The /ToUnicode CMap or null if there is none.
+     */
+    protected CMap getToUnicodeCMap()
+    {
+        return toUnicodeCMap;
     }
 }

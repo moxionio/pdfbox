@@ -176,12 +176,14 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
         WritableRaster raster = getColorModel().createCompatibleWritableRaster(w, h);
         boolean useBackground;
         int[] data = new int[w * h * 4];
+        float[] values = new float[2];
         for (int j = 0; j < h; j++)
         {
             for (int i = 0; i < w; i++)
             {
                 useBackground = false;
-                float[] values = new float[] { x + i, y + j };
+                values[0] = x + i;
+                values[1] = y + j;
                 rat.transform(values, 0, values, 0, 1);
                 double inputValue = x1x0 * (values[0] - coords[0]) + y1y0 * (values[1] - coords[1]);
                 // TODO this happens if start == end, see PDFBOX-1442
@@ -203,7 +205,7 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
                     // the shading has to be extended if extend[0] == true
                     if (extend[0])
                     {
-                        inputValue = 0;
+                        inputValue = domain[0];
                     }
                     else
                     {
@@ -220,7 +222,7 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
                     // the shading has to be extended if extend[1] == true
                     if (extend[1])
                     {
-                        inputValue = 1;
+                        inputValue = domain[1];
                     }
                     else
                     {

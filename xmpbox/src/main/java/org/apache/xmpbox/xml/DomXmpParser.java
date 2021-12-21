@@ -92,7 +92,7 @@ public class DomXmpParser
         }
         catch (ParserConfigurationException e)
         {
-            throw new XmpParsingException(ErrorType.Configuration, "Failed to initilalize", e);
+            throw new XmpParsingException(ErrorType.Configuration, "Failed to initialize", e);
         }
     }
 
@@ -373,6 +373,11 @@ public class DomXmpParser
         if (DomHelper.isParseTypeResource(property))
         {
             AbstractStructuredType ast = parseLiDescription(xmp, DomHelper.getQName(property), property);
+            if (ast == null)
+            {
+                throw new XmpParsingException(ErrorType.Format, "property should contain child elements : "
+                        + property);
+            }
             ast.setPrefix(prefix);
             container.addProperty(ast);
         }
@@ -385,6 +390,11 @@ public class DomXmpParser
                         + property);
             }
             AbstractStructuredType ast = parseLiDescription(xmp, DomHelper.getQName(property), inner);
+            if (ast == null)
+            {
+                throw new XmpParsingException(ErrorType.Format, "inner element should contain child elements : "
+                        + inner);
+            }
             ast.setPrefix(prefix);
             container.addProperty(ast);
         }
@@ -409,6 +419,11 @@ public class DomXmpParser
             {
                 nsFinder.push(inner);
                 AbstractStructuredType ast = parseLiDescription(xmp, DomHelper.getQName(property), inner);
+                if (ast == null)
+                {
+                    throw new XmpParsingException(ErrorType.Format, "inner element should contain child elements : "
+                            + inner);
+                }
                 ast.setPrefix(prefix);
                 container.addProperty(ast);
             }

@@ -37,13 +37,10 @@ import java.util.Hashtable;
 import java.util.Random;
 import javax.imageio.ImageIO;
 import junit.framework.TestCase;
-import static junit.framework.TestCase.assertEquals;
-import static junit.framework.TestCase.assertNotNull;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode;
-import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceCMYK;
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceGray;
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
 import static org.apache.pdfbox.pdmodel.graphics.image.ValidateXImage.checkIdent;
@@ -51,6 +48,7 @@ import static org.apache.pdfbox.pdmodel.graphics.image.ValidateXImage.colorCount
 import static org.apache.pdfbox.pdmodel.graphics.image.ValidateXImage.doWritePDF;
 import static org.apache.pdfbox.pdmodel.graphics.image.ValidateXImage.validate;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.junit.Assert;
 
 /**
  * Unit tests for LosslessFactory
@@ -96,7 +94,7 @@ public class LosslessFactoryTest extends TestCase
         BufferedImage bitonalImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_BYTE_BINARY);
 
         // avoid multiple of 8 to test padding
-        assertFalse(bitonalImage.getWidth() % 8 == 0);
+        Assert.assertNotEquals(0, bitonalImage.getWidth() % 8);
         
         g = bitonalImage.getGraphics();
         g.drawImage(image, 0, 0, null);
@@ -375,6 +373,57 @@ public class LosslessFactoryTest extends TestCase
         }
     }
 
+    /**
+     * Check whether the raw data of images are identical.
+     * @param expectedImage
+     * @param actualImage
+     */
+    static void checkIdentRaw(BufferedImage expectedImage, PDImageXObject actualImage)
+            throws IOException
+    {
+        WritableRaster expectedRaster = expectedImage.getRaster();
+        WritableRaster actualRaster = actualImage.getRawRaster();
+        int w = expectedRaster.getWidth();
+        int h = expectedRaster.getHeight();
+        assertEquals(w, actualRaster.getWidth());
+        assertEquals(h, actualRaster.getHeight());
+        assertEquals(expectedRaster.getDataBuffer().getDataType(), actualRaster.getDataBuffer().getDataType());
+        int numDataElements = expectedRaster.getNumDataElements();
+        int numDataElementsToCompare;
+        if (expectedImage.getAlphaRaster() != null)
+        {
+            // We do not compare the alpha channel, as this is stored extra
+            numDataElementsToCompare = numDataElements - 1;
+            assertEquals(numDataElementsToCompare, actualRaster.getNumDataElements());
+        }
+        else
+        {
+            numDataElementsToCompare = numDataElements;
+            assertEquals(numDataElements, actualRaster.getNumDataElements());
+        }
+        int[] expectedData = new int[numDataElements];
+        int[] actualData = new int[numDataElements];
+        for (int y = 0; y < h; ++y)
+        {
+            for (int x = 0; x < w; ++x)
+            {
+                expectedRaster.getPixel(x, y, expectedData);
+                actualRaster.getPixel(x, y, actualData);
+                for (int i = 0; i < numDataElementsToCompare; i++)
+                {
+                    int expectedValue = expectedData[i];
+                    int actualValue = actualData[i];
+                    if (expectedValue != actualValue)
+                    {
+                        String errMsg = String.format("(%d,%d) Channel %d %04X != %04X", x, y, i, expectedValue,
+                                actualValue);
+                        assertEquals(errMsg, expectedValue, actualValue);
+                    }
+                }
+            }
+        }
+    }
+
     private void doBitmaskTransparencyTest(int imageType, String pdfFilename) throws IOException
     {
         PDDocument document = new PDDocument();
@@ -441,8 +490,8 @@ public class LosslessFactoryTest extends TestCase
         BufferedImage maskImage = ximage.getSoftMask().getImage();
         
         // avoid multiple of 8 to test padding
-        assertFalse(maskImage.getWidth() % 8 == 0);
-        
+        Assert.assertNotEquals(0, maskImage.getWidth() % 8);
+
         assertEquals(Transparency.OPAQUE, maskImage.getTransparency());
         for (int x = 0; x < width; ++x)
         {
@@ -587,6 +636,7 @@ public class LosslessFactoryTest extends TestCase
         validate(ximage, 16, w, h, "png", PDDeviceRGB.INSTANCE.getName());
         checkIdent(image, ximage.getImage());
         checkIdentRGB(image, ximage.getOpaqueImage());
+        checkIdentRaw(image, ximage);
 
         assertNotNull(ximage.getSoftMask());
         validate(ximage.getSoftMask(), 16, w, h, "png", PDDeviceGray.INSTANCE.getName());

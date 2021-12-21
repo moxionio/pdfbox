@@ -83,6 +83,10 @@ final class PNGConverter
     private static final int CHUNK_SPLT = 0x73504C54; // sPLT: 115 80 76 84
     private static final int CHUNK_TIME = 0x74494D45; // tIME: 116 73 77 69
 
+    // CRC Reference Implementation, see
+    // https://www.w3.org/TR/2003/REC-PNG-20031110/#D-CRCAppendix
+    // for details
+
     /* Table of CRCs of all 8-bit messages. */
     private static final int[] CRC_TABLE = new int[256];
 
@@ -234,7 +238,7 @@ final class PNGConverter
         int highVal = (plte.length / 3) - 1;
         if (highVal > 255)
         {
-            LOG.error(String.format("To much colors in PLTE, only 256 allowed, found %d colors.",
+            LOG.error(String.format("Too much colors in PLTE, only 256 allowed, found %d colors.",
                     highVal + 1));
             return null;
         }
@@ -275,18 +279,16 @@ final class PNGConverter
             for (int i = 0; i < bytes.length; i++)
             {
                 int idx = (int) iis.readBits(bitsPerComponent);
-                byte v;
                 if (idx < transparencyTable.length)
                 {
                     // Inside the table, use the transparency value
-                    v = transparencyTable[idx];
+                    bytes[i] = transparencyTable[idx];
                 }
                 else
                 {
                     // Outside the table -> transparent value is 0xFF here.
-                    v = (byte) 0xFF;
+                    bytes[i] = (byte) 0xFF;
                 }
-                bytes[i] = v;
                 w++;
                 if (w == state.width)
                 {
@@ -400,67 +402,81 @@ final class PNGConverter
         if (state.iCCP != null || state.sRGB != null)
         {
             // We have got a color profile, which we must attach
-            PDICCBased profile = new PDICCBased(document);
-            COSStream cosStream = profile.getPDStream().getCOSObject();
-            cosStream.setInt(COSName.N, colorSpace.getNumberOfComponents());
-            cosStream.setItem(COSName.ALTERNATE, colorSpace.getNumberOfComponents()
-                    == 1 ? COSName.DEVICEGRAY : COSName.DEVICERGB);
-            if (state.iCCP != null)
+            COSStream cosStream = createCOSStreamwithIccProfile(document, colorSpace, state);
+            if (cosStream == null)
             {
-                cosStream.setItem(COSName.FILTER, COSName.FLATE_DECODE);
-                // We need to skip over the name
-                int iccProfileDataStart = 0;
-                while (iccProfileDataStart < 80 && iccProfileDataStart < state.iCCP.length)
-                {
-                    if (state.iCCP.bytes[state.iCCP.start + iccProfileDataStart] == 0)
-                        break;
-                    iccProfileDataStart++;
-                }
-                iccProfileDataStart++;
-                if (iccProfileDataStart >= state.iCCP.length)
-                {
-                    LOG.error("Invalid iCCP chunk, to few bytes");
-                    return null;
-                }
-                byte compressionMethod = state.iCCP.bytes[state.iCCP.start + iccProfileDataStart];
-                if (compressionMethod != 0)
-                {
-                    LOG.error(String.format("iCCP chunk: invalid compression method %d",
-                            compressionMethod));
-                    return null;
-                }
-                // Skip over the compression method
-                iccProfileDataStart++;
-
-                OutputStream rawOutputStream = cosStream.createRawOutputStream();
-                try
-                {
-                    rawOutputStream.write(state.iCCP.bytes, state.iCCP.start + iccProfileDataStart,
-                            state.iCCP.length - iccProfileDataStart);
-                }
-                finally
-                {
-                    rawOutputStream.close();
-                }
+                return null;
             }
-            else
-            {
-                // We tag the image with the sRGB profile
-                ICC_Profile rgbProfile = ICC_Profile.getInstance(ColorSpace.CS_sRGB);
-                OutputStream outputStream = cosStream.createRawOutputStream();
-                try
-                {
-                    outputStream.write(rgbProfile.getData());
-                }
-                finally
-                {
-                    outputStream.close();
-                }
-            }
-
+            COSArray array = new COSArray();
+            array.add(COSName.ICCBASED);
+            array.add(cosStream);
+            PDICCBased profile = PDICCBased.create(array, null);
             imageXObject.setColorSpace(profile);
         }
         return imageXObject;
+    }
+
+    private static COSStream createCOSStreamwithIccProfile
+        (PDDocument document, PDColorSpace colorSpace, PNGConverterState state) throws IOException
+    {
+        COSStream cosStream = document.getDocument().createCOSStream();
+        cosStream.setInt(COSName.N, colorSpace.getNumberOfComponents());
+        cosStream.setItem(COSName.ALTERNATE, colorSpace.getNumberOfComponents()
+                == 1 ? COSName.DEVICEGRAY : COSName.DEVICERGB);
+        cosStream.setItem(COSName.FILTER, COSName.FLATE_DECODE);
+        if (state.iCCP != null)
+        {
+            // We need to skip over the name
+            int iccProfileDataStart = 0;
+            while (iccProfileDataStart < 80 && iccProfileDataStart < state.iCCP.length)
+            {
+                if (state.iCCP.bytes[state.iCCP.start + iccProfileDataStart] == 0)
+                {
+                    break;
+                }
+                iccProfileDataStart++;
+            }
+            iccProfileDataStart++;
+            if (iccProfileDataStart >= state.iCCP.length)
+            {
+                LOG.error("Invalid iCCP chunk, to few bytes");
+                return null;
+            }
+            byte compressionMethod = state.iCCP.bytes[state.iCCP.start + iccProfileDataStart];
+            if (compressionMethod != 0)
+            {
+                LOG.error(String.format("iCCP chunk: invalid compression method %d",
+                        compressionMethod));
+                return null;
+            }
+            // Skip over the compression method
+            iccProfileDataStart++;
+            OutputStream rawOutputStream = cosStream.createRawOutputStream();
+            try
+            {
+                rawOutputStream.write(state.iCCP.bytes, state.iCCP.start + iccProfileDataStart,
+                        state.iCCP.length - iccProfileDataStart);
+            }
+            finally
+            {
+                rawOutputStream.close();
+            }
+        }
+        else
+        {
+            // We tag the image with the sRGB profile
+            ICC_Profile rgbProfile = ICC_Profile.getInstance(ColorSpace.CS_sRGB);
+            OutputStream outputStream = cosStream.createOutputStream();
+            try
+            {
+                outputStream.write(rgbProfile.getData());
+            }
+            finally
+            {
+                outputStream.close();
+            }
+        }
+        return cosStream;
     }
 
     private static COSDictionary buildDecodeParams(PNGConverterState state, PDColorSpace colorSpace)
@@ -891,10 +907,6 @@ final class PNGConverter
         LOG.error("No IEND chunk found.");
         return null;
     }
-
-    // CRC Reference Implementation, see
-    // https://www.w3.org/TR/2003/REC-PNG-20031110/#D-CRCAppendix
-    // for details
 
     /* Make the table for a fast CRC. */
     private static void makeCrcTable()

@@ -190,7 +190,7 @@ public abstract class PDSimpleFont extends PDFont
         {
             if (encoding == null)
             {
-                // sanity check, should never happen
+                // check, should never happen
                 if (!(this instanceof PDTrueTypeFont))
                 {
                     throw new IllegalStateException("PDFBox bug: encoding should not be null!");
@@ -328,6 +328,19 @@ public abstract class PDSimpleFont extends PDFont
             if (".notdef".equals(nameInAFM))
             {
                 return 250f;
+            }
+
+            if ("nbspace".equals(nameInAFM))
+            {
+                // PDFBOX-4944: nbspace is missing in AFM files,
+                // but PDF specification tells "it shall be typographically the same as SPACE"
+                nameInAFM = "space";
+            }
+            else if ("sfthyphen".equals(nameInAFM))
+            {
+                // PDFBOX-5115: sfthyphen is missing in AFM files,
+                // but PDF specification tells "it shall be typographically the same as hyphen"
+                nameInAFM = "hyphen";
             }
 
             return getStandard14AFM().getCharacterWidth(nameInAFM);

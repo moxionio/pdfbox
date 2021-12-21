@@ -47,7 +47,6 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cms.CMSException;
 import org.bouncycastle.cms.CMSSignedData;
 import org.bouncycastle.cms.SignerInformation;
-import org.bouncycastle.util.Selector;
 import org.bouncycastle.util.Store;
 
 /**
@@ -184,11 +183,10 @@ public class CertInformationCollector
         Collection<SignerInformation> signers = signedData.getSignerInfos().getSigners();
         SignerInformation signerInformation = signers.iterator().next();
 
-        @SuppressWarnings("unchecked")
         Store<X509CertificateHolder> certificatesStore = signedData.getCertificates();
         @SuppressWarnings("unchecked")
-        Collection<X509CertificateHolder> matches = certificatesStore
-                .getMatches((Selector<X509CertificateHolder>) signerInformation.getSID());
+        Collection<X509CertificateHolder> matches =
+                certificatesStore.getMatches(signerInformation.getSID());
 
         X509Certificate certificate = getCertFromHolder(matches.iterator().next());
         certificateSet.add(certificate);
@@ -405,7 +403,7 @@ public class CertInformationCollector
     /**
      * Data class to hold Signature, Certificate (and its chain(s)) and revocation Information
      */
-    public class CertSignatureInformation
+    public static class CertSignatureInformation
     {
         private X509Certificate certificate;
         private String signatureHash;

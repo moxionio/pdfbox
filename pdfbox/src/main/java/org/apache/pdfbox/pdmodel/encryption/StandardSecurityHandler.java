@@ -74,10 +74,6 @@ public final class StandardSecurityHandler extends SecurityHandler
     // hashes used for Algorithm 2.B, depending on remainder from E modulo 3
     private static final String[] HASHES_2B = new String[] {"SHA-256", "SHA-384", "SHA-512"};
 
-    private static final int DEFAULT_VERSION = 1;
-
-    private StandardProtectionPolicy policy;
-
     /**
      * Constructor.
      */
@@ -88,37 +84,12 @@ public final class StandardSecurityHandler extends SecurityHandler
     /**
      * Constructor used for encryption.
      *
-     * @param p The protection policy.
+     * @param standardProtectionPolicy The protection policy.
      */
-    public StandardSecurityHandler(StandardProtectionPolicy p)
+    public StandardSecurityHandler(StandardProtectionPolicy standardProtectionPolicy)
     {
-        policy = p;
-        keyLength = policy.getEncryptionKeyLength();
-    }
-
-    /**
-     * Computes the version number of the StandardSecurityHandler
-     * based on the encryption key length.
-     * See PDF Spec 1.6 p 93 and PDF 1.7 AEL3
-     *
-     * @return The computed version number.
-     */
-    private int computeVersionNumber()
-    {
-        if(keyLength == 40)
-        {
-            return DEFAULT_VERSION;
-        }
-        else if (keyLength == 128 && policy.isPreferAES())
-        {
-            return 4;
-        }
-        else if (keyLength == 256)
-        {
-            return 5;
-        }
-
-        return 2;
+        setProtectionPolicy(standardProtectionPolicy);
+        setKeyLength(standardProtectionPolicy.getEncryptionKeyLength());
     }
 
     /**
@@ -132,7 +103,9 @@ public final class StandardSecurityHandler extends SecurityHandler
      */
     private int computeRevisionNumber(int version)
     {
-        if(version < 2 && !policy.getPermissions().hasAnyRevision3PermissionSet())
+        StandardProtectionPolicy protectionPolicy = (StandardProtectionPolicy) getProtectionPolicy();
+        AccessPermission permissions = protectionPolicy.getPermissions();
+        if (version < 2 && !permissions.hasAnyRevision3PermissionSet())
         {
             return 2;
         }
@@ -145,7 +118,7 @@ public final class StandardSecurityHandler extends SecurityHandler
         {
             return 4;
         }
-        if ( version == 2 || version == 3 || policy.getPermissions().hasAnyRevision3PermissionSet())
+        if (version == 2 || version == 3 || permissions.hasAnyRevision3PermissionSet())
         {
             return 3;
         }
@@ -177,7 +150,7 @@ public final class StandardSecurityHandler extends SecurityHandler
         // This is only used with security version 4 and 5.
         if (encryption.getVersion() >= 4) {
 	        setStreamFilterName(encryption.getStreamFilterName());
-	        setStringFilterName(encryption.getStreamFilterName());
+	        setStringFilterName(encryption.getStringFilterName());
         }
         setDecryptMetadata(encryption.isEncryptMetaData());
         StandardDecryptionMaterial material = (StandardDecryptionMaterial)decryptionMaterial;
@@ -191,6 +164,28 @@ public final class StandardSecurityHandler extends SecurityHandler
         int dicPermissions = encryption.getPermissions();
         int dicRevision = encryption.getRevision();
         int dicLength = encryption.getVersion() == 1 ? 5 : encryption.getLength() / 8;
+        
+        if (encryption.getVersion() == 4 || encryption.getVersion() == 5)
+        {
+            // detect whether AES encryption is used. This assumes that the encryption algo is 
+            // stored in the PDCryptFilterDictionary
+            // However, crypt filters are used only when V is 4 or 5.
+            PDCryptFilterDictionary stdCryptFilterDictionary = encryption.getStdCryptFilterDictionary();
+            if (stdCryptFilterDictionary != null)
+            {
+                COSName cryptFilterMethod = stdCryptFilterDictionary.getCryptFilterMethod();
+                if (COSName.AESV2.equals(cryptFilterMethod))
+                {
+                    dicLength = 128 / 8;
+                    setAES(true);
+                }
+                if (COSName.AESV3.equals(cryptFilterMethod))
+                {
+                    dicLength = 256 / 8;
+                    setAES(true);
+                }
+            }
+        }
 
         byte[] documentIDBytes = getDocumentIDBytes(documentIDArray);
 
@@ -234,7 +229,7 @@ public final class StandardSecurityHandler extends SecurityHandler
                         ownerKey, dicRevision, dicLength );
             }
             
-            encryptionKey =
+            setEncryptionKey(
                 computeEncryptedKey(
                     computedPassword,
                     ownerKey, userKey, oe, ue,
@@ -242,7 +237,7 @@ public final class StandardSecurityHandler extends SecurityHandler
                     documentIDBytes,
                     dicRevision,
                     dicLength,
-                    encryptMetadata, true );
+                    encryptMetadata, true));
         }
         else if( isUserPassword(password.getBytes(passwordCharset), userKey, ownerKey,
                            dicPermissions, documentIDBytes, dicRevision,
@@ -252,7 +247,7 @@ public final class StandardSecurityHandler extends SecurityHandler
             currentAccessPermission.setReadOnly();
             setCurrentAccessPermission(currentAccessPermission);
             
-            encryptionKey =
+            setEncryptionKey(
                 computeEncryptedKey(
                     password.getBytes(passwordCharset),
                     ownerKey, userKey, oe, ue,
@@ -260,7 +255,7 @@ public final class StandardSecurityHandler extends SecurityHandler
                     documentIDBytes,
                     dicRevision,
                     dicLength,
-                    encryptMetadata, false );
+                    encryptMetadata, false));
         }
         else
         {
@@ -270,21 +265,6 @@ public final class StandardSecurityHandler extends SecurityHandler
         if (dicRevision == 6 || dicRevision == 5)
         {
             validatePerms(encryption, dicPermissions, encryptMetadata);
-        }
-
-        if (encryption.getVersion() == 4 || encryption.getVersion() == 5)
-        {
-            // detect whether AES encryption is used. This assumes that the encryption algo is 
-            // stored in the PDCryptFilterDictionary
-            // However, crypt filters are used only when V is 4 or 5.
-            PDCryptFilterDictionary stdCryptFilterDictionary = encryption.getStdCryptFilterDictionary();
-
-            if (stdCryptFilterDictionary != null)
-            {
-                COSName cryptFilterMethod = stdCryptFilterDictionary.getCryptFilterMethod();
-                setAES(COSName.AESV2.equals(cryptFilterMethod) || 
-                       COSName.AESV3.equals(cryptFilterMethod));
-            }
         }
     }
 
@@ -314,7 +294,7 @@ public final class StandardSecurityHandler extends SecurityHandler
             // "Decrypt the 16-byte Perms string using AES-256 in ECB mode with an 
             // initialization vector of zero and the file encryption key as the key."
             Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(encryptionKey, "AES"));
+            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(getEncryptionKey(), "AES"));
             byte[] perms = cipher.doFinal(encryption.getPerms());
             
             // "Verify that bytes 9-11 of the result are the characters ‘a’, ‘d’, ‘b’."
@@ -371,10 +351,11 @@ public final class StandardSecurityHandler extends SecurityHandler
             encryptionDictionary.removeV45filters();
         }
         encryptionDictionary.setRevision(revision);
-        encryptionDictionary.setLength(keyLength);
+        encryptionDictionary.setLength(getKeyLength());
 
-        String ownerPassword = policy.getOwnerPassword();
-        String userPassword = policy.getUserPassword();
+        StandardProtectionPolicy protectionPolicy = (StandardProtectionPolicy) getProtectionPolicy();
+        String ownerPassword = protectionPolicy.getOwnerPassword();
+        String userPassword = protectionPolicy.getUserPassword();
         if( ownerPassword == null )
         {
             ownerPassword = "";
@@ -390,11 +371,11 @@ public final class StandardSecurityHandler extends SecurityHandler
             ownerPassword = userPassword;
         }
 
-        int permissionInt = policy.getPermissions().getPermissionBytes();
+        int permissionInt = protectionPolicy.getPermissions().getPermissionBytes();
 
         encryptionDictionary.setPermissions(permissionInt);
 
-        int length = keyLength/8;
+        int length = getKeyLength()/8;
 
         if (revision == 6)
         {
@@ -423,8 +404,8 @@ public final class StandardSecurityHandler extends SecurityHandler
             Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
 
             // make a random 256-bit file encryption key
-            encryptionKey = new byte[32];
-            rnd.nextBytes(encryptionKey);
+            setEncryptionKey(new byte[32]);
+            rnd.nextBytes(getEncryptionKey());
 
             // Algorithm 8a: Compute U
             byte[] userPasswordBytes = truncate127(userPassword.getBytes(Charsets.UTF_8));
@@ -441,7 +422,7 @@ public final class StandardSecurityHandler extends SecurityHandler
                     userPasswordBytes, null);
             cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(hashUE, "AES"),
                     new IvParameterSpec(new byte[16]));
-            byte[] ue = cipher.doFinal(encryptionKey);
+            byte[] ue = cipher.doFinal(getEncryptionKey());
 
             // Algorithm 9a: Compute O
             byte[] ownerPasswordBytes = truncate127(ownerPassword.getBytes(Charsets.UTF_8));
@@ -458,7 +439,7 @@ public final class StandardSecurityHandler extends SecurityHandler
                     ownerPasswordBytes, u);
             cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(hashOE, "AES"),
                     new IvParameterSpec(new byte[16]));
-            byte[] oe = cipher.doFinal(encryptionKey);
+            byte[] oe = cipher.doFinal(getEncryptionKey());
 
             // Set keys and other required constants in encryption dictionary
             encryptionDictionary.setUserKey(u);
@@ -487,7 +468,7 @@ public final class StandardSecurityHandler extends SecurityHandler
                 perms[i] = (byte) rnd.nextInt();
             }
 
-            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(encryptionKey, "AES"),
+            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(getEncryptionKey(), "AES"),
                     new IvParameterSpec(new byte[16]));
 
             byte[] permsEnc = cipher.doFinal(perms);
@@ -537,8 +518,8 @@ public final class StandardSecurityHandler extends SecurityHandler
                 userPassword.getBytes(Charsets.ISO_8859_1),
                 ownerBytes, permissionInt, id.getBytes(), revision, length, true);
 
-        encryptionKey = computeEncryptedKey(userPassword.getBytes(Charsets.ISO_8859_1), ownerBytes,
-                null, null, null, permissionInt, id.getBytes(), revision, length, true, false);
+        setEncryptionKey(computeEncryptedKey(userPassword.getBytes(Charsets.ISO_8859_1), ownerBytes,
+                null, null, null, permissionInt, id.getBytes(), revision, length, true, false));
 
         encryptionDictionary.setOwnerKey(ownerBytes);
         encryptionDictionary.setUserKey(userBytes);
@@ -553,7 +534,7 @@ public final class StandardSecurityHandler extends SecurityHandler
     {
         PDCryptFilterDictionary cryptFilterDictionary = new PDCryptFilterDictionary();
         cryptFilterDictionary.setCryptFilterMethod(aesVName);
-        cryptFilterDictionary.setLength(keyLength);
+        cryptFilterDictionary.setLength(getKeyLength());
         encryptionDictionary.setStdCryptFilterDictionary(cryptFilterDictionary);
         encryptionDictionary.setStreamFilterName(COSName.STD_CF);
         encryptionDictionary.setStringFilterName(COSName.STD_CF);
@@ -586,6 +567,11 @@ public final class StandardSecurityHandler extends SecurityHandler
             
             byte[] oHash = new byte[32];
             byte[] oValidationSalt = new byte[8];
+            if (owner.length < 40)
+            {
+                // PDFBOX-5104
+                throw new IOException("Owner password is too short");
+            }
             System.arraycopy(owner, 0, oHash, 0, 32);
             System.arraycopy(owner, 32, oValidationSalt, 0, 8);
             
@@ -737,6 +723,10 @@ public final class StandardSecurityHandler extends SecurityHandler
 
         if (isOwnerPassword)
         {
+            if (oe == null)
+            {
+                throw new IOException("/Encrypt/OE entry is missing");
+            }
             byte[] oKeySalt = new byte[8];
             System.arraycopy(o, 40, oKeySalt, 0, 8);
 
@@ -753,6 +743,10 @@ public final class StandardSecurityHandler extends SecurityHandler
         }
         else
         {
+            if (ue == null)
+            {
+                throw new IOException("/Encrypt/UE entry is missing");
+            }
             byte[] uKeySalt = new byte[8];
             System.arraycopy(u, 40, uKeySalt, 0, 8);
 
@@ -1088,7 +1082,7 @@ public final class StandardSecurityHandler extends SecurityHandler
             byte[] k = md.digest(input);
             
             byte[] e = null;
-            for (int round = 0; round < 64 || ((int)e[e.length-1] & 0xFF) > round - 32; round++)
+            for (int round = 0; round < 64 || (e[e.length-1] & 0xFF) > round - 32; round++)
             {                
                 byte[] k1;
                 if (userKey != null && userKey.length >= 48)
@@ -1201,14 +1195,5 @@ public final class StandardSecurityHandler extends SecurityHandler
         catch (NoSuchAlgorithmException ex)
         {
         }
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean hasProtectionPolicy()
-    {
-        return policy != null;
     }
 }

@@ -17,6 +17,7 @@
 package org.apache.pdfbox.pdmodel.interactive.form;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -26,6 +27,7 @@ import static org.junit.Assert.fail;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -252,6 +254,40 @@ public class PDAcroFormTest
         }
     }
 
+    /*
+     * Test that we don't add missing ressouce information to an AcroForm 
+     * when accessing the AcroForm on the PD level with fix ups being set to
+     * false
+     * (PDFBOX-5000)
+     */
+    @Test
+    public void testDontAddMissingInformationOnAcroFormAccess()
+    {
+        try
+        {
+            byte[] pdfBytes =  createAcroFormWithMissingResourceInformation();
+            PDDocument pdfDocument = PDDocument.load(pdfBytes);
+            PDDocumentCatalog documentCatalog = pdfDocument.getDocumentCatalog();
+            
+            // this call shall skip triggering the generation of missing information
+            PDAcroForm theAcroForm = documentCatalog.getAcroForm(null);
+            
+            // ensure that the missing information has not been generated
+            // DA entry
+            assertEquals("", theAcroForm.getDefaultAppearance());
+            // Resources
+            assertNull(theAcroForm.getDefaultResources());
+            pdfDocument.close();
+        }
+        catch (IOException e)
+        {
+            System.err.println("Couldn't create test document, test skipped");
+            return;
+        }
+    }
+
+
+
     /**
      * PDFBOX-4235: a bad /DA string should not result in an NPE.
      * 
@@ -350,6 +386,40 @@ public class PDAcroFormTest
         assertNotEquals(PDType1Font.ZAPF_DINGBATS, zadb);
         doc.close();
     }
+
+    /**
+     * PDFBOX-3777 Illegal Fields definition COSDictionary instead of Array
+     * 
+     * @throws IOException
+     */
+    @Test
+    public void testIllegalFieldsDefinition() throws IOException
+    {
+        String sourceUrl = "https://issues.apache.org/jira/secure/attachment/12866226/D1790B.PDF";
+
+        PDDocument testPdf = null;
+        try
+        {
+            testPdf = PDDocument.load(new URL(sourceUrl).openStream());
+            PDDocumentCatalog catalog = testPdf.getDocumentCatalog();
+            boolean thrown = false;
+            try
+            {
+                catalog.getAcroForm();
+            }
+            catch (Exception e)
+            {
+                thrown = true;                
+            }
+            assertFalse("There shall be no exception when getting the AcroForm", thrown);
+        }
+        finally
+        {
+            IOUtils.closeQuietly(testPdf);
+        }
+    }
+
+
 
     @After
     public void tearDown() throws IOException

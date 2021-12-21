@@ -171,7 +171,7 @@ final class SampledImageReader
     }
 
     /**
-     * Returns the content of the given image as an AWT buffered image with an RGB color space.
+     * Returns the content of the given image as a newly created AWT buffered image with an RGB color space.
      * If a color key mask is provided then an ARGB image is returned instead.
      * This method never returns null.
      * @param pdImage the image to read
@@ -198,7 +198,6 @@ final class SampledImageReader
         final int width = (int) Math.ceil(clipped.getWidth() / subsampling);
         final int height = (int) Math.ceil(clipped.getHeight() / subsampling);
         final int bitsPerComponent = pdImage.getBitsPerComponent();
-        final float[] decode = getDecodeArray(pdImage);
 
         if (width <= 0 || height <= 0 || pdImage.getWidth() <= 0 || pdImage.getHeight() <= 0)
         {
@@ -220,7 +219,8 @@ final class SampledImageReader
             WritableRaster raster = Raster.createInterleavedRaster(DataBuffer.TYPE_BYTE, width, height,
                     numComponents, new Point(0, 0));
             final float[] defaultDecode = pdImage.getColorSpace().getDefaultDecode(8);
-            if (bitsPerComponent == 8 && Arrays.equals(decode, defaultDecode) && colorKey == null)
+            final float[] decode = getDecodeArray(pdImage);
+            if (bitsPerComponent == 8 && colorKey == null && Arrays.equals(decode, defaultDecode))
             {
                 // convert image, faster path for non-decoded, non-colormasked 8-bit images
                 return from8bit(pdImage, raster, clipped, subsampling, width, height);
@@ -233,6 +233,150 @@ final class SampledImageReader
         }
     }
 
+    /**
+     * Extract the raw unconverted raster of the given image
+     * @param pdImage  The image to get the raw raster data from
+     * @return the raw raster of this image
+     * @throws IOException
+     */
+    public static WritableRaster getRawRaster(PDImage pdImage) throws IOException
+    {
+        if (pdImage.isEmpty())
+        {
+            throw new IOException("Image stream is empty");
+        }
+
+        // get parameters, they must be valid or have been repaired
+        final PDColorSpace colorSpace = pdImage.getColorSpace();
+        final int numComponents = colorSpace.getNumberOfComponents();
+        final int width = pdImage.getWidth();
+        final int height = pdImage.getHeight();
+        final int bitsPerComponent = pdImage.getBitsPerComponent();
+
+        if (width <= 0 || height <= 0)
+        {
+            throw new IOException("image width and height must be positive");
+        }
+
+        try
+        {
+            int dataBufferType = DataBuffer.TYPE_BYTE;
+            if (bitsPerComponent > 8)
+            {
+                dataBufferType = DataBuffer.TYPE_USHORT;
+            }
+            WritableRaster raster = Raster.createInterleavedRaster(dataBufferType, width, height, numComponents,
+                    new Point(0, 0));
+            readRasterFromAny(pdImage, raster);
+            return raster;
+        }
+        catch (NegativeArraySizeException ex)
+        {
+            throw new IOException(ex);
+        }
+    }
+
+    private static void readRasterFromAny(PDImage pdImage, WritableRaster raster)
+            throws IOException
+    {
+        final PDColorSpace colorSpace = pdImage.getColorSpace();
+        final int numComponents = colorSpace.getNumberOfComponents();
+        final int bitsPerComponent = pdImage.getBitsPerComponent();
+        final float[] decode = getDecodeArray(pdImage);
+        DecodeOptions options = new DecodeOptions();
+
+        // read bit stream
+        ImageInputStream iis = null;
+        try
+        {
+            iis = new MemoryCacheImageInputStream(pdImage.createInputStream(options));
+
+            final int inputWidth = pdImage.getWidth();
+            final int scanWidth = pdImage.getWidth();
+            final int scanHeight = pdImage.getHeight();
+
+            // create stream
+            final float sampleMax = (float) Math.pow(2, bitsPerComponent) - 1f;
+            final boolean isIndexed = colorSpace instanceof PDIndexed;
+
+            // calculate row padding
+            int padding = 0;
+            if (inputWidth * numComponents * bitsPerComponent % 8 > 0)
+            {
+                padding = 8 - (inputWidth * numComponents * bitsPerComponent % 8);
+            }
+
+            // read stream
+            final boolean isShort = raster.getDataBuffer().getDataType() == DataBuffer.TYPE_USHORT;
+            assert !isIndexed || !isShort;
+            final byte[] srcColorValuesBytes = isShort ? null : new byte[numComponents];
+            final short[] srcColorValuesShort = isShort ? new short[numComponents] : null;
+            for (int y = 0; y < scanHeight; y++)
+            {
+                for (int x = 0; x < scanWidth; x++)
+                {
+                    for (int c = 0; c < numComponents; c++)
+                    {
+                        int value = (int) iis.readBits(bitsPerComponent);
+
+                        // decode array
+                        final float dMin = decode[c * 2];
+                        final float dMax = decode[(c * 2) + 1];
+
+                        // interpolate to domain
+                        float output = dMin + (value * ((dMax - dMin) / sampleMax));
+
+                        if (isIndexed)
+                        {
+                            // indexed color spaces get the raw value, because the TYPE_BYTE
+                            // below cannot be reversed by the color space without it having
+                            // knowledge of the number of bits per component
+                            srcColorValuesBytes[c] = (byte) Math.round(output);
+                        }
+                        else
+                        {
+                            if (isShort)
+                            {
+                                // interpolate to TYPE_SHORT
+                                int outputShort = Math
+                                        .round(((output - Math.min(dMin, dMax)) / Math.abs(dMax - dMin)) * 65535f);
+
+                                srcColorValuesShort[c] = (short) outputShort;
+                            }
+                            else
+                            {
+                                // interpolate to TYPE_BYTE
+                                int outputByte = Math
+                                        .round(((output - Math.min(dMin, dMax)) / Math.abs(dMax - dMin)) * 255f);
+
+                                srcColorValuesBytes[c] = (byte) outputByte;
+                            }
+                        }
+                    }
+
+                    if (isShort)
+                    {
+                        raster.setDataElements(x, y, srcColorValuesShort);
+                    }
+                    else
+                    {
+                        raster.setDataElements(x, y, srcColorValuesBytes);
+                    }
+                }
+
+                // rows are padded to the nearest byte
+                iis.readBits(padding);
+            }
+        }
+        finally
+        {
+            if (iis != null)
+            {
+                iis.close();
+            }
+        }
+    }
+
     private static BufferedImage from1Bit(PDImage pdImage, Rectangle clipped, final int subsampling,
                                           final int width, final int height) throws IOException
     {
@@ -241,7 +385,6 @@ final class SampledImageReader
         final float[] decode = getDecodeArray(pdImage);
         BufferedImage bim = null;
         WritableRaster raster;
-        byte[] output;
 
         DecodeOptions options = new DecodeOptions(currentSubsampling);
         options.setSourceRegion(clipped);
@@ -288,58 +431,41 @@ final class SampledImageReader
             {
                 raster = Raster.createBandedRaster(DataBuffer.TYPE_BYTE, width, height, 1, new Point(0, 0));
             }
-            output = ((DataBufferByte) raster.getDataBuffer()).getData();
-            final boolean isIndexed = colorSpace instanceof PDIndexed;
 
-            int rowLen = inputWidth / 8;
-            if (inputWidth % 8 > 0)
-            {
-                rowLen++;
-            }
-
-            // read stream
-            byte value0;
-            byte value1;
-            if (isIndexed || decode[0] < decode[1])
-            {
-                value0 = 0;
-                value1 = (byte) 255;
-            }
-            else
-            {
-                value0 = (byte) 255;
-                value1 = 0;
-            }
-            byte[] buff = new byte[rowLen];
+            final byte[] output = ((DataBufferByte) raster.getDataBuffer()).getData();
             int idx = 0;
+
+            // read stream byte per byte, invert pixel bits if necessary,
+            // and then simply shift bits out to the left, detecting set bits via sign 
+            final boolean nosubsampling = currentSubsampling == 1;
+            final int stride = (inputWidth + 7) / 8;
+            final int invert = colorSpace instanceof PDIndexed || decode[0] < decode[1] ? 0 : -1;
+            final int endX = startx + scanWidth;
+            final byte[] buff = new byte[stride];
             for (int y = 0; y < starty + scanHeight; y++)
             {
-                int x = 0;
-                int readLen = (int) IOUtils.populateBuffer(iis, buff);
-                if (y < starty || y % currentSubsampling > 0)
+                int read = (int) IOUtils.populateBuffer(iis, buff);
+                if (y >= starty && y % currentSubsampling == 0)
                 {
-                    continue;
-                }
-                for (int r = 0; r < rowLen && r < readLen; r++)
-                {
-                    int value = buff[r];
-                    int mask = 128;
-                    for (int i = 0; i < 8; i++)
+                    int x = startx;
+                    for (int r = x / 8; r < stride && r < read; r++)
                     {
-                        if (x >= startx + scanWidth)
+                        int value = (buff[r] ^ invert) << (24 + (x & 7));
+                        for (int count = Math.min(8 - (x & 7), endX - x); count > 0; x++, count--)
                         {
-                            break;
+                            if (nosubsampling || x % currentSubsampling == 0)
+                            {
+                                if (value < 0)
+                                {
+                                    output[idx] = (byte) 255;
+                                }
+                                idx++;
+                            }
+                            value <<= 1;
                         }
-                        int bit = value & mask;
-                        mask >>= 1;
-                        if (x >= startx && x % currentSubsampling == 0)
-                        {
-                            output[idx++] = bit == 0 ? value0 : value1;
-                        }
-                        x++;
                     }
                 }
-                if (readLen != rowLen)
+                if (read != stride)
                 {
                     LOG.warn("premature EOF, image will be incomplete");
                     break;

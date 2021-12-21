@@ -27,7 +27,6 @@ import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSNumber;
-import org.apache.pdfbox.cos.COSObject;
 import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.pdmodel.PDAppearanceContentStream;
@@ -82,7 +81,7 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
     public void generateNormalAppearance()
     {
         PDAnnotationMarkup annotation = (PDAnnotationMarkup) getAnnotation();
-        float[] pathsArray = new float[0];
+        float[] pathsArray;
         if (PDAnnotationMarkup.IT_FREE_TEXT_CALLOUT.equals(annotation.getIntent()))
         {
             pathsArray = annotation.getCallout();
@@ -90,6 +89,10 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
             {
                 pathsArray = new float[0];
             }
+        }
+        else
+        {
+            pathsArray = new float[0];
         }
         AnnotationBorder ab = AnnotationBorder.getAnnotationBorder(annotation, annotation.getBorderStyle());
 
@@ -391,11 +394,7 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
             Operator graphicOp = null;
             for (Object token = parser.parseNextToken(); token != null; token = parser.parseNextToken())
             {
-                if (token instanceof COSObject)
-                {
-                    arguments.add(((COSObject) token).getObject());
-                }
-                else if (token instanceof Operator)
+                if (token instanceof Operator)
                 {
                     Operator op = (Operator) token;
                     String name = op.getName();
@@ -460,11 +459,7 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
             COSArray fontArguments = new COSArray();
             for (Object token = parser.parseNextToken(); token != null; token = parser.parseNextToken())
             {
-                if (token instanceof COSObject)
-                {
-                    arguments.add(((COSObject) token).getObject());
-                }
-                else if (token instanceof Operator)
+                if (token instanceof Operator)
                 {
                     Operator op = (Operator) token;
                     String name = op.getName();

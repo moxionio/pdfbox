@@ -47,7 +47,7 @@ import org.apache.pdfbox.pdmodel.PDPageTree;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem;
 import org.apache.pdfbox.pdmodel.interactive.pagenavigation.PDThreadBead;
-import org.apache.pdfbox.util.QuickSort;
+import org.apache.pdfbox.util.IterativeMergeSort;
 
 /**
  * This class will take a pdf document and strip out all of the text and ignore the formatting and such. Please note; it
@@ -63,7 +63,6 @@ public class PDFTextStripper extends LegacyPDFStreamEngine
 {
     private static float defaultIndentThreshold = 2.0f;
     private static float defaultDropThreshold = 2.5f;
-    private static final boolean useCustomQuickSort;
 
     private static final Log LOG = LogFactory.getLog(PDFTextStripper.class);
 
@@ -109,36 +108,6 @@ public class PDFTextStripper extends LegacyPDFStreamEngine
                 // ignore and use default
             }
         }
-    }
-    
-    static
-    {
-        // check if we need to use the custom quicksort algorithm as a
-        // workaround to the PDFBOX-1512 transitivity issue of TextPositionComparator:
-        boolean is16orLess = false;
-        try
-        {
-            String version = System.getProperty("java.specification.version");
-            StringTokenizer st = new StringTokenizer(version, ".");
-            int majorVersion = Integer.parseInt(st.nextToken());
-            int minorVersion = 0;
-            if (st.hasMoreTokens())
-            {
-                minorVersion = Integer.parseInt(st.nextToken());
-            }
-            is16orLess = majorVersion == 1 && minorVersion <= 6;
-        }
-        catch (SecurityException x)
-        {
-            // when run in an applet ignore and use default
-            // assume 1.7 or higher so that quicksort is used
-        }
-        catch (NumberFormatException nfe)
-        {
-            // should never happen, but if it does,
-            // assume 1.7 or higher so that quicksort is used
-        }
-        useCustomQuickSort = !is16orLess;
     }
 
     /**
@@ -242,10 +211,7 @@ public class PDFTextStripper extends LegacyPDFStreamEngine
         {
             charactersByArticle.clear();
         }
-        if (characterListMapping != null)
-        {
-            characterListMapping.clear();
-        }
+        characterListMapping.clear();
     }
 
     /**
@@ -405,7 +371,7 @@ public class PDFTextStripper extends LegacyPDFStreamEngine
         beadRectangles = new ArrayList<PDRectangle>();
         for (PDThreadBead bead : page.getThreadBeads())
         {
-            if (bead == null)
+            if (bead == null || bead.getRectangle() == null)
             {
                 // can't skip, because of null entry handling in processTextPosition()
                 beadRectangles.add(null);
@@ -534,14 +500,14 @@ public class PDFTextStripper extends LegacyPDFStreamEngine
 
                 // because the TextPositionComparator is not transitive, but
                 // JDK7+ enforces transitivity on comparators, we need to use
-                // a custom quicksort implementation (which is slower, unfortunately).
-                if (useCustomQuickSort)
-                {
-                    QuickSort.sort(textList, comparator);
-                }
-                else
+                // a custom mergesort implementation (which is slower, unfortunately).
+                try
                 {
                     Collections.sort(textList, comparator);
+                }
+                catch (IllegalArgumentException e)
+                {
+                    IterativeMergeSort.sort(textList, comparator);
                 }
             }
 
@@ -685,6 +651,16 @@ public class PDFTextStripper extends LegacyPDFStreamEngine
                                                     .endsWith(wordSeparator))))
                     {
                         line.add(LineItem.getWordSeparator());
+                    }
+                    // if there is at least the equivalent of one space
+                    // between the last character and the current one,
+                    // reset the max line height as the font size may have completely changed
+                    if (Math.abs(position.getX()
+                            - lastPosition.getTextPosition().getX()) > (wordSpacing + deltaSpace))
+                    {
+                        maxYForLine = MAX_Y_FOR_LINE_RESET_VALUE;
+                        maxHeightForLine = MAX_HEIGHT_FOR_LINE_RESET_VALUE;
+                        minYTopForLine = MIN_Y_TOP_FOR_LINE_RESET_VALUE;
                     }
                 }
                 if (positionY >= maxYForLine)
@@ -1952,7 +1928,7 @@ public class PDFTextStripper extends LegacyPDFStreamEngine
                 {
                     builder = new StringBuilder(strLength * 2);
                 }
-                builder.append(word.substring(p, q));
+                builder.append(word, p, q);
                 // Some fonts map U+FDF2 differently than the Unicode spec.
                 // They add an extra U+0627 character to compensate.
                 // This removes the extra character for those fonts.
@@ -1976,7 +1952,7 @@ public class PDFTextStripper extends LegacyPDFStreamEngine
         }
         else
         {
-            builder.append(word.substring(p, q));
+            builder.append(word, p, q);
             return handleDirection(builder.toString());
         }
     }

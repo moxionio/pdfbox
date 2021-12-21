@@ -133,7 +133,7 @@ public class Type2CharString extends Type1CharString
         else if ("endchar".equals(name))
         {
             numbers = clearStack(numbers, numbers.size() == 5 || numbers.size() == 1);
-            closePath();
+            closeCharString2Path();
             if (numbers.size() == 4)
             {
                 // deprecated "seac" operator
@@ -288,12 +288,12 @@ public class Type2CharString extends Type1CharString
     {
         if (pathCount > 0)
         {
-            closePath();
+            closeCharString2Path();
         }
         pathCount++;
     }
 
-    private void closePath()
+    private void closeCharString2Path()
     {
         CharStringCommand command = pathCount > 0 ? (CharStringCommand) type1Sequence
                 .get(type1Sequence.size() - 1)
@@ -382,8 +382,9 @@ public class Type2CharString extends Type1CharString
 
     private static <E> List<List<E>> split(List<E> list, int size)
     {
-        List<List<E>> result = new ArrayList<List<E>>();
-        for (int i = 0; i < list.size() / size; i++)
+        int listSize = list.size() / size;
+        List<List<E>> result = new ArrayList<List<E>>(listSize);
+        for (int i = 0; i < listSize; i++)
         {
             result.add(list.subList(i * size, (i + 1) * size));
         }
