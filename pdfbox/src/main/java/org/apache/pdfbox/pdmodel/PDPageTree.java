@@ -46,6 +46,8 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
     private final COSDictionary root;
     private final PDDocument document; // optional
 
+    private final Set<COSDictionary> pageSet = new HashSet<COSDictionary>();
+
     /**
      * Constructor for embedding.
      */
@@ -202,7 +204,15 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
             }
             else
             {
-                queue.add(node);
+                if (COSName.PAGE.equals(node.getCOSName(COSName.TYPE)))
+                {
+                    queue.add(node);
+                }
+                else
+                {
+                    LOG.error("Page skipped due to an invalid or missing type "
+                            + node.getCOSName(COSName.TYPE));
+                }
             }
         }
 
@@ -283,7 +293,18 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
         {
             throw new IndexOutOfBoundsException("Index out of bounds: " + pageNum);
         }
-
+        if (pageSet.contains(node))
+        {
+            pageSet.clear();
+            throw new IllegalStateException(
+                    "Possible recursion found when searching for page " + pageNum);
+        }
+        else
+        {
+            // collect already processed pages to detect possible recursions
+            // to avoid a StackOverflowError
+            pageSet.add(node);
+        }
         if (isPageTreeNode(node))
         {
             int count = node.getInt(COSName.COUNT, 0);
@@ -329,6 +350,7 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
         {
             if (encountered == pageNum)
             {
+                pageSet.clear();
                 return node;
             }
             else

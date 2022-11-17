@@ -274,6 +274,10 @@ public class CMapParser
                 checkExpectedOperator((Operator) nextToken, "endcodespacerange", "codespacerange");
                 break;
             }
+            if (!(nextToken instanceof byte[]))
+            {
+                throw new IOException("start range missing");
+            }
             byte[] startRange = (byte[]) nextToken;
             byte[] endRange = (byte[]) parseNextToken(cmapStream);
             try
@@ -296,6 +300,10 @@ public class CMapParser
             {
                 checkExpectedOperator((Operator) nextToken, "endbfchar", "bfchar");
                 break;
+            }
+            if (!(nextToken instanceof byte[]))
+            {
+                throw new IOException("input code missing");
             }
             byte[] inputCode = (byte[]) nextToken;
             nextToken = parseNextToken(cmapStream);
@@ -326,6 +334,10 @@ public class CMapParser
             {
                 checkExpectedOperator((Operator) nextToken, "endcidrange", "cidrange");
                 break;
+            }
+            if (!(nextToken instanceof byte[]))
+            {
+                throw new IOException("start range missing");
             }
             byte[] startCode = (byte[]) nextToken;
             int start = createIntFromBytes(startCode);
@@ -368,6 +380,10 @@ public class CMapParser
                 checkExpectedOperator((Operator) nextToken, "endcidchar", "cidchar");
                 break;
             }
+            if (!(nextToken instanceof byte[]))
+            {
+                throw new IOException("start code missing");
+            }
             byte[] inputCode = (byte[]) nextToken;
             int mappedCode = (Integer) parseNextToken(cmapStream);
             int mappedCID = createIntFromBytes(inputCode);
@@ -385,8 +401,22 @@ public class CMapParser
                 checkExpectedOperator((Operator) nextToken, "endbfrange", "bfrange");
                 break;
             }
+            if (!(nextToken instanceof byte[]))
+            {
+                throw new IOException("start code missing");
+            }
             byte[] startCode = (byte[]) nextToken;
-            byte[] endCode = (byte[]) parseNextToken(cmapStream);
+            nextToken = parseNextToken(cmapStream);
+            if (nextToken instanceof Operator)
+            {
+                checkExpectedOperator((Operator) nextToken, "endbfrange", "bfrange");
+                break;
+            }
+            if (!(nextToken instanceof byte[]))
+            {
+                throw new IOException("end code missing");
+            }
+            byte[] endCode = (byte[]) nextToken;
             int start = CMap.toInt(startCode, startCode.length);
             int end = CMap.toInt(endCode, endCode.length);
             // end has to be bigger than start or equal
@@ -664,13 +694,20 @@ public class CMapParser
             }
             is.unread(nextByte);
             String value = buffer.toString();
-            if (value.indexOf('.') >= 0)
+            try
             {
-                retval = Double.valueOf(value);
+                if (value.indexOf('.') >= 0)
+                {
+                    retval = Double.valueOf(value);
+                }
+                else
+                {
+                    retval = Integer.valueOf(value);
+                }
             }
-            else
+            catch (NumberFormatException ex)
             {
-                retval = Integer.valueOf(value);
+                throw new IOException("Invalid number '" + value + "'", ex);
             }
             break;
         }

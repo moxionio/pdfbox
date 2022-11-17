@@ -40,10 +40,13 @@ import java.awt.geom.PathIterator;
 import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
+import java.awt.image.ByteLookupTable;
 import java.awt.image.ColorModel;
 import java.awt.image.ComponentColorModel;
 import java.awt.image.DataBuffer;
 import java.awt.image.DataBufferByte;
+import java.awt.image.LookupOp;
+import java.awt.image.LookupTable;
 import java.awt.image.Raster;
 import java.awt.image.WritableRaster;
 import java.io.IOException;
@@ -55,7 +58,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.StringTokenizer;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -115,8 +117,9 @@ import org.apache.pdfbox.util.Vector;
  * If you want to do custom graphics processing rather than Graphics2D rendering, then you should
  * subclass {@link PDFGraphicsStreamEngine} instead. Subclassing PageDrawer is only suitable for
  * cases where the goal is to render onto a {@link Graphics2D} surface. In that case you'll also
- * have to subclass {@link PDFRenderer} and modify
- * {@link PDFRenderer#createPageDrawer(PageDrawerParameters)}.
+ * have to subclass {@link PDFRenderer} and override
+ * {@link PDFRenderer#createPageDrawer(PageDrawerParameters)}. See the <i>OpaquePDFRenderer.java</i>
+ * example in the source code download on how to do this.
  *
  * @author Ben Litchfield
  */
@@ -168,8 +171,7 @@ public class PageDrawer extends PDFGraphicsStreamEngine
     private final RenderDestination destination;
     private final RenderingHints renderingHints;
     private final float imageDownscalingOptimizationThreshold;
-
-    static final int JAVA_VERSION = PageDrawer.getJavaVersion();
+    private LookupTable invTable = null;
 
     /**
     * Default annotations filter, returns all annotations
@@ -492,7 +494,15 @@ public class PageDrawer extends PDFGraphicsStreamEngine
         at.concatenate(font.getFontMatrix().createAffineTransform());
 
         Glyph2D glyph2D = createGlyph2D(font);
-        drawGlyph2D(glyph2D, font, code, displacement, at);
+        try
+        {
+            drawGlyph2D(glyph2D, font, code, displacement, at);
+        }
+        catch (IOException ex)
+        {
+            LOG.error("Could not draw glyph for code " + code + " at position (" +
+                    at.getTranslateX() + "," + at.getTranslateY() + ")", ex);
+        }
     }
 
     /**
@@ -825,32 +835,21 @@ public class PageDrawer extends PDFGraphicsStreamEngine
                 return null;
             }
         }
-        if (JAVA_VERSION < 10)
+        for (int i = 0; i < dashArray.length; ++i)
         {
-            for (int i = 0; i < dashArray.length; ++i)
+            // apply the CTM
+            float w = transformWidth(dashArray[i]);
+            // minimum line dash width avoids JVM crash,
+            // see PDFBOX-2373, PDFBOX-2929, PDFBOX-3204, PDFBOX-3813
+            // also avoid 0 in array like "[ 0 1000 ] 0 d", see PDFBOX-3724
+            if (xformScalingFactorX < 0.5f)
             {
-                // apply the CTM
-                float w = transformWidth(dashArray[i]);
-                // minimum line dash width avoids JVM crash,
-                // see PDFBOX-2373, PDFBOX-2929, PDFBOX-3204, PDFBOX-3813
-                // also avoid 0 in array like "[ 0 1000 ] 0 d", see PDFBOX-3724
-                if (xformScalingFactorX < 0.5f)
-                {
-                    // PDFBOX-4492
-                    dashArray[i] = Math.max(w, 0.2f);
-                }
-                else
-                {
-                    dashArray[i] = Math.max(w, 0.062f);
-                }
+                // PDFBOX-4492
+                dashArray[i] = Math.max(w, 0.2f);
             }
-        }
-        else
-        {
-            for (int i = 0; i < dashArray.length; ++i)
+            else
             {
-                // apply the CTM
-                dashArray[i] = transformWidth(dashArray[i]);
+                dashArray[i] = Math.max(w, 0.062f);
             }
         }
         return dashArray;
@@ -1111,8 +1110,9 @@ public class PageDrawer extends PDFGraphicsStreamEngine
             {
                 bim = pdImage.getImage();
             }
-            boolean isScaledUp = bim.getWidth() < Math.round(at.getScaleX()) ||
-                                 bim.getHeight() < Math.round(at.getScaleY());
+            Matrix m = new Matrix(at);
+            boolean isScaledUp = bim.getWidth() < Math.abs(Math.round(m.getScalingFactorX())) ||
+                                 bim.getHeight() < Math.abs(Math.round(m.getScalingFactorY()));
 
             if (isScaledUp)
             {
@@ -1167,19 +1167,65 @@ public class PageDrawer extends PDFGraphicsStreamEngine
 
                 // draw the mask
                 BufferedImage mask = pdImage.getImage();
-                BufferedImage renderedMask = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
-                g = (Graphics2D) renderedMask.getGraphics();
-                g.translate(-bounds.getMinX(), -bounds.getMinY());
                 AffineTransform imageTransform = new AffineTransform(at);
                 imageTransform.scale(1.0 / mask.getWidth(), -1.0 / mask.getHeight());
                 imageTransform.translate(0, -mask.getHeight());
+                AffineTransform full = new AffineTransform(g.getTransform());
+                full.concatenate(imageTransform);
+                Matrix m = new Matrix(full);
+                double scaleX = Math.abs(m.getScalingFactorX());
+                double scaleY = Math.abs(m.getScalingFactorY());
+
+                boolean smallMask = mask.getWidth() <= 8 && mask.getHeight() <= 8;
+                if (!smallMask)
+                {
+                    // PDFBOX-5403:
+                    // The mask is copied to RGB because this supports a smooth scaling, so we
+                    // get a mask with 255 values instead of just 0 and 255.
+                    // Inverting is done because when we don't do it, the getScaledInstance() call
+                    // produces a black line in many masks. With the inversion we have a white line
+                    // which is neutral. Because of the inversion we don't have to substract from 255
+                    // in the "apply the mask" segment when rasterPixel[3] is assigned.
+
+                    // The inversion is not done for very small ones, because of
+                    // PDFBOX-2171-002-002710-p14.pdf where the "New Harmony Consolidated" and
+                    // "Sailor Springs" patterns became almost invisible.
+                    // (We may have to decide this differently in the future, e.g. on b/w relationship)
+                    BufferedImage tmp = new BufferedImage(mask.getWidth(), mask.getHeight(), BufferedImage.TYPE_INT_RGB);
+                    mask = new LookupOp(getInvLookupTable(), graphics.getRenderingHints()).filter(mask, tmp);
+                }
+
+                BufferedImage renderedMask = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+                g = (Graphics2D) renderedMask.getGraphics();
+                g.translate(-bounds.getMinX(), -bounds.getMinY());
                 g.setRenderingHints(graphics.getRenderingHints());
-                g.drawImage(mask, imageTransform, null);
+
+                if (smallMask)
+                {
+                    g.drawImage(mask, imageTransform, null);
+                }
+                else
+                {
+                    while (scaleX < 0.25)
+                    {
+                        scaleX *= 2.0;
+                    }
+                    while (scaleY < 0.25)
+                    {
+                        scaleY *= 2.0;
+                    }
+                    int w2 = (int) Math.round(mask.getWidth() * scaleX);
+                    int h2 = (int) Math.round(mask.getHeight() * scaleY);
+
+                    Image scaledMask = mask.getScaledInstance(w2, h2, Image.SCALE_SMOOTH);
+                    imageTransform.scale(1f / Math.abs(scaleX), 1f / Math.abs(scaleY));
+                    g.drawImage(scaledMask, imageTransform, null);
+                }
                 g.dispose();
 
                 // apply the mask
-                final int[] transparent = new int[4];
                 int[] alphaPixel = null;
+                int[] rasterPixel = null;
                 WritableRaster raster = renderedPaint.getRaster();
                 WritableRaster alpha = renderedMask.getRaster();
                 for (int y = 0; y < h; y++)
@@ -1187,10 +1233,9 @@ public class PageDrawer extends PDFGraphicsStreamEngine
                     for (int x = 0; x < w; x++)
                     {
                         alphaPixel = alpha.getPixel(x, y, alphaPixel);
-                        if (alphaPixel[0] == 255)
-                        {
-                            raster.setPixel(x, y, transparent);
-                        }
+                        rasterPixel = raster.getPixel(x, y, rasterPixel);
+                        rasterPixel[3] = alphaPixel[0];
+                        raster.setPixel(x, y, rasterPixel);
                     }
                 }
 
@@ -1682,7 +1727,15 @@ public class PageDrawer extends PDFGraphicsStreamEngine
             Matrix transform = Matrix.concatenate(ctm, form.getMatrix());
 
             // transform the bbox
-            GeneralPath transformedBox = form.getBBox().transform(transform);
+            PDRectangle formBBox = form.getBBox();
+            if (formBBox == null)
+            {
+                // PDFBOX-5471
+                // check done here and not in caller to avoid getBBox() creating rectangle twice
+                LOG.warn("transparency group ignored because BBox is null");
+                formBBox = new PDRectangle();
+            }
+            GeneralPath transformedBox = formBBox.transform(transform);
 
             // clip the bbox to prevent giant bboxes from consuming all memory
             Area transformed = new Area(transformedBox);
@@ -2089,25 +2142,17 @@ public class PageDrawer extends PDFGraphicsStreamEngine
         return true;
     }
 
-    private static int getJavaVersion()
+    private LookupTable getInvLookupTable()
     {
-        // strategy from lucene-solr/lucene/core/src/java/org/apache/lucene/util/Constants.java
-        String version = System.getProperty("java.specification.version");
-        final StringTokenizer st = new StringTokenizer(version, ".");
-        try
+        if (invTable == null)
         {
-            int major = Integer.parseInt(st.nextToken());
-            int minor = 0;
-            if (st.hasMoreTokens())
+            byte[] inv = new byte[256];
+            for (int i = 0; i < inv.length; i++)
             {
-                minor = Integer.parseInt(st.nextToken());
+                inv[i] = (byte) (255 - i);
             }
-            return major == 1 ? minor : major;
+            invTable = new ByteLookupTable(0, inv);
         }
-        catch (NumberFormatException nfe)
-        {
-            // maybe some new numbering scheme in the 22nd century
-            return 0;
-        }
+        return invTable;
     }
 }

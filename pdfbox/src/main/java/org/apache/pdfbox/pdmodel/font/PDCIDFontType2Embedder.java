@@ -21,12 +21,10 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.TreeMap;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -105,7 +103,7 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
             throws IOException
     {
         // build CID2GIDMap, because the content stream has been written with the old GIDs
-        Map<Integer, Integer> cidToGid = new HashMap<Integer, Integer>(gidToCid.size());
+        TreeMap<Integer, Integer> cidToGid = new TreeMap<Integer, Integer>();
         for (Map.Entry<Integer, Integer> entry : gidToCid.entrySet())
         {
             int newGID = entry.getKey();
@@ -236,25 +234,24 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
         cidFont.setName(COSName.BASE_FONT, newName);
     }
 
-    private void buildCIDToGIDMap(Map<Integer, Integer> cidToGid) throws IOException
+    private void buildCIDToGIDMap(TreeMap<Integer, Integer> cidToGid) throws IOException
     {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        int cidMax = Collections.max(cidToGid.keySet());
+        int cidMax = cidToGid.lastKey();
+        byte[] buffer = new byte[cidMax * 2 + 2];
+        int bi = 0;
         for (int i = 0; i <= cidMax; i++)
         {
-            int gid;
-            if (cidToGid.containsKey(i))
+            Integer gid = cidToGid.get(i);
+            if (gid != null)
             {
-                gid = cidToGid.get(i);
+                buffer[bi]   = (byte) (gid >> 8 & 0xff);
+                buffer[bi+1] = (byte) (gid & 0xff);
             }
-            else
-            {
-                gid = 0;
-            }
-            out.write(new byte[] { (byte)(gid >> 8 & 0xff), (byte)(gid & 0xff) });
+            // else keep 0 initialization
+            bi += 2;
         }
 
-        InputStream input = new ByteArrayInputStream(out.toByteArray());
+        InputStream input = new ByteArrayInputStream(buffer);
         PDStream stream = new PDStream(document, input, COSName.FLATE_DECODE);
 
         cidFont.setItem(COSName.CID_TO_GID_MAP, stream);
@@ -264,9 +261,9 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
      * Builds the CIDSet entry, required by PDF/A. This lists all CIDs in the font, including those
      * that don't have a GID.
      */
-    private void buildCIDSet(Map<Integer, Integer> cidToGid) throws IOException
+    private void buildCIDSet(TreeMap<Integer, Integer> cidToGid) throws IOException
     {
-        int cidMax = Collections.max(cidToGid.keySet());
+        int cidMax = cidToGid.lastKey();
         byte[] bytes = new byte[cidMax / 8 + 1];
         for (int cid = 0; cid <= cidMax; cid++)
         {
@@ -283,7 +280,7 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
     /**
      * Builds widths with a custom CIDToGIDMap (for embedding font subset).
      */
-    private void buildWidths(Map<Integer, Integer> cidToGid) throws IOException
+    private void buildWidths(TreeMap<Integer, Integer> cidToGid) throws IOException
     {
         float scaling = 1000f / ttf.getHeader().getUnitsPerEm();
 
@@ -291,11 +288,12 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
         COSArray ws = new COSArray();
         int prev = Integer.MIN_VALUE;
         // Use a sorted list to get an optimal width array  
-        Set<Integer> keys = new TreeSet<Integer>(cidToGid.keySet());
+        Set<Integer> keys = cidToGid.keySet();
+        HorizontalMetricsTable horizontalMetricsTable = ttf.getHorizontalMetrics();
         for (int cid : keys)
         {
             int gid = cidToGid.get(cid);
-            long width = Math.round(ttf.getHorizontalMetrics().getAdvanceWidth(gid) * scaling);
+            long width = Math.round(horizontalMetricsTable.getAdvanceWidth(gid) * scaling);
             if (width == 1000)
             {
                 // skip default width
@@ -340,7 +338,7 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
     /**
      * Builds vertical metrics with a custom CIDToGIDMap (for embedding font subset).
      */
-    private void buildVerticalMetrics(Map<Integer, Integer> cidToGid) throws IOException
+    private void buildVerticalMetrics(TreeMap<Integer, Integer> cidToGid) throws IOException
     {
         // The "vhea" and "vmtx" tables that specify vertical metrics shall never be used by a conforming
         // reader. The only way to specify vertical metrics in PDF shall be by means of the DW2 and W2
@@ -365,7 +363,7 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
         COSArray w2 = new COSArray();
         int prev = Integer.MIN_VALUE;
         // Use a sorted list to get an optimal width array
-        Set<Integer> keys = new TreeSet<Integer>(cidToGid.keySet());
+        Set<Integer> keys = cidToGid.keySet();
         for (int cid : keys)
         {
             // Unlike buildWidths, we look up with cid (not gid) here because this is
@@ -405,10 +403,11 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
     {
         int cidMax = ttf.getNumberOfGlyphs();
         int[] gidwidths = new int[cidMax * 2];
+        HorizontalMetricsTable horizontalMetricsTable = ttf.getHorizontalMetrics();
         for (int cid = 0; cid < cidMax; cid++)
         {
             gidwidths[cid * 2] = cid;
-            gidwidths[cid * 2 + 1] = ttf.getHorizontalMetrics().getAdvanceWidth(cid);
+            gidwidths[cid * 2 + 1] = horizontalMetricsTable.getAdvanceWidth(cid);
         }
 
         cidFont.setItem(COSName.W, getWidths(gidwidths));
@@ -421,9 +420,9 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
 
     private COSArray getWidths(int[] widths) throws IOException
     {
-        if (widths.length == 0)
+        if (widths.length < 2)
         {
-            throw new IllegalArgumentException("length of widths must be > 0");
+            throw new IllegalArgumentException("length of widths must be >= 2");
         }
 
         float scaling = 1000f / ttf.getHeader().getUnitsPerEm();
@@ -437,7 +436,7 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
 
         State state = State.FIRST;
 
-        for (int i = 2; i < widths.length; i += 2)
+        for (int i = 2; i < widths.length - 1; i += 2)
         {
             long cid   = widths[i];
             long value = Math.round(widths[i + 1] * scaling);
@@ -527,9 +526,12 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
 
         int cidMax = ttf.getNumberOfGlyphs();
         int[] gidMetrics = new int[cidMax * 4];
+        GlyphTable glyphTable = ttf.getGlyph();
+        VerticalMetricsTable verticalMetricsTable = ttf.getVerticalMetrics();
+        HorizontalMetricsTable horizontalMetricsTable = ttf.getHorizontalMetrics();
         for (int cid = 0; cid < cidMax; cid++)
         {
-            GlyphData glyph = ttf.getGlyph().getGlyph(cid);
+            GlyphData glyph = glyphTable.getGlyph(cid);
             if (glyph == null)
             {
                 gidMetrics[cid * 4] = Integer.MIN_VALUE;
@@ -537,9 +539,9 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
             else
             {
                 gidMetrics[cid * 4] = cid;
-                gidMetrics[cid * 4 + 1] = ttf.getVerticalMetrics().getAdvanceHeight(cid);
-                gidMetrics[cid * 4 + 2] = ttf.getHorizontalMetrics().getAdvanceWidth(cid);
-                gidMetrics[cid * 4 + 3] = glyph.getYMaximum() + ttf.getVerticalMetrics().getTopSideBearing(cid);
+                gidMetrics[cid * 4 + 1] = verticalMetricsTable.getAdvanceHeight(cid);
+                gidMetrics[cid * 4 + 2] = horizontalMetricsTable.getAdvanceWidth(cid);
+                gidMetrics[cid * 4 + 3] = glyph.getYMaximum() + verticalMetricsTable.getTopSideBearing(cid);
             }
         }
 
@@ -548,9 +550,9 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
 
     private COSArray getVerticalMetrics(int[] values) throws IOException
     {
-        if (values.length == 0)
+        if (values.length < 4)
         {
-            throw new IllegalArgumentException("length of values must be > 0");
+            throw new IllegalArgumentException("length of values must be >= 4");
         }
 
         float scaling = 1000f / ttf.getHeader().getUnitsPerEm();
@@ -566,7 +568,7 @@ final class PDCIDFontType2Embedder extends TrueTypeEmbedder
 
         State state = State.FIRST;
 
-        for (int i = 4; i < values.length; i += 4)
+        for (int i = 4; i < values.length - 3; i += 4)
         {
             long cid = values[i];
             if (cid == Integer.MIN_VALUE)

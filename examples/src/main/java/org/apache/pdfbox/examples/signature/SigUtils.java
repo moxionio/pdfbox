@@ -17,6 +17,10 @@
 package org.apache.pdfbox.examples.signature;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateParsingException;
 import java.security.cert.X509Certificate;
@@ -27,14 +31,17 @@ import java.util.List;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSObjectKey;
 import org.apache.pdfbox.examples.signature.cert.CertificateVerificationException;
 import org.apache.pdfbox.examples.signature.cert.CertificateVerifier;
+import org.apache.pdfbox.examples.util.ConnectedInputStream;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.encryption.SecurityProvider;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature;
@@ -343,5 +350,72 @@ public class SigUtils
         // For the EU, get a list here:
         // https://ec.europa.eu/digital-single-market/en/eu-trusted-lists-trust-service-providers
         // ( getRootCertificates() is not helpful because these are SSL certificates)
+    }
+
+    /**
+     * Look for gaps in the cross reference table and display warnings if any found. See also
+     * <a href="https://stackoverflow.com/questions/71267471/">here</a>.
+     *
+     * @param doc document.
+     */
+    public static void checkCrossReferenceTable(PDDocument doc)
+    {
+        TreeSet<COSObjectKey> set = new TreeSet<COSObjectKey>(doc.getDocument().getXrefTable().keySet());
+        if (set.size() != set.last().getNumber())
+        {
+            long n = 0;
+            for (COSObjectKey key : set)
+            {
+                ++n;
+                while (n < key.getNumber())
+                {
+                    LOG.warn("Object " + n + " missing, signature verification may fail in " +
+                             "Adobe Reader, see https://stackoverflow.com/questions/71267471/");
+                    ++n;
+                }
+            }
+        }
+    }
+
+    /**
+     * Like {@link URL#openStream()} but will follow redirection from http to https.
+     *
+     * @param urlString
+     * @return
+     * @throws MalformedURLException
+     * @throws IOException 
+     */
+    public static InputStream openURL(String urlString) throws MalformedURLException, IOException
+    {
+        URL url = new URL(urlString);
+        if (!urlString.startsWith("http"))
+        {
+            // so that ftp is still supported
+            return url.openStream();
+        }
+        HttpURLConnection con = (HttpURLConnection) url.openConnection();
+        int responseCode = con.getResponseCode();
+        LOG.info(responseCode + " " + con.getResponseMessage());
+        if (responseCode == HttpURLConnection.HTTP_MOVED_TEMP ||
+            responseCode == HttpURLConnection.HTTP_MOVED_PERM ||
+            responseCode == HttpURLConnection.HTTP_SEE_OTHER)
+        {
+            String location = con.getHeaderField("Location");
+            if (urlString.startsWith("http://") &&
+                location.startsWith("https://") &&
+                urlString.substring(7).equals(location.substring(8)))
+            {
+                // redirection from http:// to https://
+                // change this code if you want to be more flexible (but think about security!)
+                LOG.info("redirection to " + location + " followed");
+                con.disconnect();
+                con = (HttpURLConnection) new URL(location).openConnection();
+            }
+            else
+            {
+                LOG.info("redirection to " + location + " ignored");
+            }
+        }
+        return new ConnectedInputStream(con, con.getInputStream());
     }
 }

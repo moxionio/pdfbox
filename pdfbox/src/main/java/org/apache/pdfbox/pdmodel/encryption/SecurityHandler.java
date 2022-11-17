@@ -71,7 +71,7 @@ public abstract class SecurityHandler
      */
     protected short keyLength = DEFAULT_KEY_LENGTH;
 
-    /** The encryption key that will used to encrypt / decrypt. Will become private in 3.0. */
+    /** The encryption key that will be used to encrypt / decrypt. Will become private in 3.0. */
     protected byte[] encryptionKey;
 
     /** The RC4 implementation used for cryptographic functions. */
@@ -598,9 +598,8 @@ public abstract class SecurityHandler
      * @param objNum The object number.
      * @param genNum The object generation number.
      *
-     * @throws IOException If an error occurs writing the new string.
      */
-    private void decryptString(COSString string, long objNum, long genNum) throws IOException
+    private void decryptString(COSString string, long objNum, long genNum)
     {
         // String encrypted with identity filter
         if (COSName.IDENTITY.equals(stringFilterName))
