@@ -27,7 +27,6 @@ import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSNumber;
-import org.apache.pdfbox.cos.COSObject;
 import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.pdmodel.PDAppearanceContentStream;
@@ -48,6 +47,7 @@ import org.apache.pdfbox.pdmodel.interactive.annotation.PDBorderEffectDictionary
 import org.apache.pdfbox.pdmodel.interactive.annotation.layout.AppearanceStyle;
 import org.apache.pdfbox.pdmodel.interactive.annotation.layout.PlainText;
 import org.apache.pdfbox.pdmodel.interactive.annotation.layout.PlainTextFormatter;
+import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
 import org.apache.pdfbox.util.Matrix;
 
 public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
@@ -71,18 +71,10 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
     }
 
     @Override
-    public void generateAppearanceStreams()
-    {
-        generateNormalAppearance();
-        generateRolloverAppearance();
-        generateDownAppearance();
-    }
-
-    @Override
     public void generateNormalAppearance()
     {
         PDAnnotationMarkup annotation = (PDAnnotationMarkup) getAnnotation();
-        float[] pathsArray = new float[0];
+        float[] pathsArray;
         if (PDAnnotationMarkup.IT_FREE_TEXT_CALLOUT.equals(annotation.getIntent()))
         {
             pathsArray = annotation.getCallout();
@@ -90,6 +82,10 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
             {
                 pathsArray = new float[0];
             }
+        }
+        else
+        {
+            pathsArray = new float[0];
         }
         AnnotationBorder ab = AnnotationBorder.getAnnotationBorder(annotation, annotation.getBorderStyle());
 
@@ -244,17 +240,21 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
             float clipHeight = rotation == 90 || rotation == 270 ? 
                                 borderBox.getWidth() - ab.width * 4 : borderBox.getHeight() - ab.width * 4;
             extractFontDetails(annotation);
-            if (document != null && document.getDocumentCatalog().getAcroForm() != null)
+            if (document != null)
             {
-                // Try to get font from AcroForm default resources
-                // Sample file: https://gitlab.freedesktop.org/poppler/poppler/issues/6
-                PDResources defaultResources = document.getDocumentCatalog().getAcroForm().getDefaultResources();
-                if (defaultResources != null)
+                PDAcroForm acroForm = document.getDocumentCatalog().getAcroForm();
+                if (acroForm != null)
                 {
-                    PDFont defaultResourcesFont = defaultResources.getFont(fontName);
-                    if (defaultResourcesFont != null)
+                    // Try to get font from AcroForm default resources
+                    // Sample file: https://gitlab.freedesktop.org/poppler/poppler/issues/6
+                    PDResources defaultResources = acroForm.getDefaultResources();
+                    if (defaultResources != null)
                     {
-                        font = defaultResourcesFont;
+                        PDFont defaultResourcesFont = defaultResources.getFont(fontName);
+                        if (defaultResourcesFont != null)
+                        {
+                            font = defaultResourcesFont;
+                        }
                     }
                 }
             }
@@ -391,11 +391,7 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
             Operator graphicOp = null;
             for (Object token = parser.parseNextToken(); token != null; token = parser.parseNextToken())
             {
-                if (token instanceof COSObject)
-                {
-                    arguments.add(((COSObject) token).getObject());
-                }
-                else if (token instanceof Operator)
+                if (token instanceof Operator)
                 {
                     Operator op = (Operator) token;
                     String name = op.getName();
@@ -442,10 +438,13 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
     private void extractFontDetails(PDAnnotationMarkup annotation)
     {
         String defaultAppearance = annotation.getDefaultAppearance();
-        if (defaultAppearance == null && document != null &&
-            document.getDocumentCatalog().getAcroForm() != null)
+        if (defaultAppearance == null && document != null)
         {
-            defaultAppearance = document.getDocumentCatalog().getAcroForm().getDefaultAppearance();
+            PDAcroForm pdAcroForm = document.getDocumentCatalog().getAcroForm();
+            if (pdAcroForm != null)
+            {
+                defaultAppearance = pdAcroForm.getDefaultAppearance();
+            }
         }
         if (defaultAppearance == null)
         {
@@ -460,11 +459,7 @@ public class PDFreeTextAppearanceHandler extends PDAbstractAppearanceHandler
             COSArray fontArguments = new COSArray();
             for (Object token = parser.parseNextToken(); token != null; token = parser.parseNextToken())
             {
-                if (token instanceof COSObject)
-                {
-                    arguments.add(((COSObject) token).getObject());
-                }
-                else if (token instanceof Operator)
+                if (token instanceof Operator)
                 {
                     Operator op = (Operator) token;
                     String name = op.getName();

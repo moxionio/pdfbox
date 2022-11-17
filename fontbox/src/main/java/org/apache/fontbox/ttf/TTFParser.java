@@ -19,6 +19,8 @@ package org.apache.fontbox.ttf;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 /**
  * TrueType font file parser.
@@ -27,6 +29,8 @@ import java.io.InputStream;
  */
 public class TTFParser
 {
+    private static final Log LOG = LogFactory.getLog(TTFParser.class);
+
     private boolean isEmbedded = false;
     private boolean parseOnDemandOnly = false;
 
@@ -141,7 +145,18 @@ public class TTFParser
             // skip tables with zero length
             if (table != null)
             {
-                font.addTable(table);
+                if (table.getOffset() + table.getLength() > font.getOriginalDataSize())
+                {
+                    // PDFBOX-5285 if we're lucky, this is an "unimportant" table, e.g. vmtx
+                    LOG.warn("Skip table '" + table.getTag() + 
+                            "' which goes past the file size; offset: " + table.getOffset() + 
+                            ", size: " + table.getLength() + 
+                            ", font size: " + font.getOriginalDataSize());
+                }
+                else
+                {
+                    font.addTable(table);
+                }
             }
         }
         // parse tables if wanted
@@ -174,60 +189,66 @@ public class TTFParser
             }
         }
         
-        boolean isPostScript = allowCFF() && font.tables.containsKey(CFFTable.TAG);
+        boolean hasCFF = font.tables.containsKey(CFFTable.TAG);
+        boolean isPostScript = allowCFF() && hasCFF;
         
         HeaderTable head = font.getHeader();
         if (head == null)
         {
-            throw new IOException("head is mandatory");
+            throw new IOException("'head' table is mandatory");
         }
 
         HorizontalHeaderTable hh = font.getHorizontalHeader();
         if (hh == null)
         {
-            throw new IOException("hhead is mandatory");
+            throw new IOException("'hhea' table is mandatory");
         }
 
         MaximumProfileTable maxp = font.getMaximumProfile();
         if (maxp == null)
         {
-            throw new IOException("maxp is mandatory");
+            throw new IOException("'maxp' table is mandatory");
         }
 
         PostScriptTable post = font.getPostScript();
         if (post == null && !isEmbedded)
         {
             // in an embedded font this table is optional
-            throw new IOException("post is mandatory");
+            throw new IOException("'post' table is mandatory");
         }
 
         if (!isPostScript)
         {
+            String messageSuffix = "";
+            if (hasCFF)
+            {
+                messageSuffix = "; this an OpenType CFF font, but we expected a TrueType font here";
+            }
             IndexToLocationTable loc = font.getIndexToLocation();
             if (loc == null)
             {
-                throw new IOException("loca is mandatory");
+                throw new IOException("'loca' table is mandatory" + messageSuffix);
             }
 
             if (font.getGlyph() == null)
             {
-                throw new IOException("glyf is mandatory");
+                throw new IOException("'glyf' table is mandatory" + messageSuffix);
             }
         }
 
         if (font.getNaming() == null && !isEmbedded)
         {
-            throw new IOException("name is mandatory");
+            throw new IOException("'name' table is mandatory");
         }
 
         if (font.getHorizontalMetrics() == null)
         {
-            throw new IOException("hmtx is mandatory");
+            throw new IOException("'hmtx' table is mandatory");
         }
         
         if (!isEmbedded && font.getCmap() == null)
         {
-            throw new IOException("cmap is mandatory");
+            throw new IOException("'cmap' table is mandatory");
         }
     }
 

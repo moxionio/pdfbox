@@ -29,7 +29,7 @@ import java.util.Map;
 import org.apache.xmpbox.XMPMetadata;
 
 /**
- * Astract Object representation of a XMP 'field' (-&gt; Properties and specific Schemas)
+ * Abstract Object representation of a XMP 'field' (-&gt; Properties and specific Schemas)
  * 
  * @author a183132
  * 
@@ -81,11 +81,6 @@ public abstract class AbstractField
      */
     public final void setAttribute(Attribute value)
     {
-        if (attributes.containsKey(value.getName()))
-        {
-            // if same name in element, attribute will be replaced
-            attributes.remove(value.getName());
-        }
         attributes.put(value.getName(), value);
     }
 
@@ -131,10 +126,7 @@ public abstract class AbstractField
      */
     public final void removeAttribute(String qualifiedName)
     {
-        if (containsAttribute(qualifiedName))
-        {
-            attributes.remove(qualifiedName);
-        }
+        attributes.remove(qualifiedName);
 
     }
 

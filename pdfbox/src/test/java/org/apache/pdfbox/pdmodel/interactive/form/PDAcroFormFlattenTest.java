@@ -71,6 +71,7 @@ public class PDAcroFormFlattenTest
     /*
      * PDFBOX-563 Filled template.
      */
+    // Disabled as there is a minimal difference which can not be seen visually on ci-builds
     // @Test
     public void testFlattenPDFBOX563() throws IOException
     {
@@ -95,6 +96,7 @@ public class PDAcroFormFlattenTest
     /*
      * PDFBOX-2469 Filled template.
      */
+    // Disabled as there is a minimal difference which can not be seen visually, see PDFBOX-5133
     // @Test
     public void testFlattenPDFBOX2469Filled() throws IOException
     {
@@ -189,18 +191,6 @@ public class PDAcroFormFlattenTest
     }
 
     /*
-     * PDFBOX-3587 Empty template.
-     */
-    // @Test
-    public void testFlattenOpenOfficeForm() throws IOException
-    {
-        String sourceUrl = "https://issues.apache.org/jira/secure/attachment/12839977/OpenOfficeForm.pdf";
-        String targetFileName = "OpenOfficeForm.pdf";
-
-        flattenAndCompare(sourceUrl, targetFileName);
-    }
-
-    /*
      * PDFBOX-3587 Filled template.
      */
     // @Test
@@ -239,6 +229,7 @@ public class PDAcroFormFlattenTest
     /**
      * PDFBOX-4615 Filled template.
      */
+    // Disabled as there is a minimal difference which can not be seen visually on ci-builds
     // @Test
     public void testFlattenPDFBox4615() throws IOException
     {
@@ -283,6 +274,30 @@ public class PDAcroFormFlattenTest
     {
         String sourceUrl = "https://issues.apache.org/jira/secure/attachment/13005793/f1040sb%20test.pdf";
         String targetFileName = "PDFBOX-4889.pdf";
+
+        flattenAndCompare(sourceUrl, targetFileName);
+    }
+
+    /**
+     * PDFBOX-4955: appearance streams with forms that are not used.
+     * 
+     * @throws IOException
+     */
+    @Test
+    public void testFlattenPDFBox4955() throws IOException
+    {
+        String sourceUrl = "https://issues.apache.org/jira/secure/attachment/13011410/PDFBOX-4955.pdf";
+        String targetFileName = "PDFBOX-4955.pdf";
+
+        flattenAndCompare(sourceUrl, targetFileName);
+    }
+
+    // Disabled as there is a minimal difference which can not be seen visually on ci-builds
+    // @Test
+    public void testFlattenPDFBox4958() throws IOException
+    {
+        String sourceUrl = "https://issues.apache.org/jira/secure/attachment/13012242/PDFBOX-4958.pdf";
+        String targetFileName = "PDFBOX-4958-flattened.pdf";
 
         flattenAndCompare(sourceUrl, targetFileName);
     }

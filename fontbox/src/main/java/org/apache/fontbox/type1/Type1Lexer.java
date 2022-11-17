@@ -20,6 +20,7 @@
 package org.apache.fontbox.type1;
 
 import java.io.IOException;
+import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -86,11 +87,28 @@ class Type1Lexer
     }
 
     /**
+     * Checks if the kind of the next token equals the given one without consuming it.
+     * 
+     * @return true if the kind of the next token equals the given one
+     */
+    public boolean peekKind(Token.Kind kind)
+    {
+        return aheadToken != null && aheadToken.getKind() == kind;
+    }
+
+    /**
      * Reads an ASCII char from the buffer.
      */
-    private char getChar()
+    private char getChar() throws IOException
     {
-        return (char) buffer.get();
+        try
+        {
+        	return (char) buffer.get();
+        }
+        catch (BufferUnderflowException exception)
+        {
+            throw new IOException("Premature end of buffer reached");
+        }
     }
 
     /**
@@ -140,7 +158,14 @@ class Type1Lexer
                 }
                 else if (c == '/')
                 {
-                    return new Token(readRegular(), Token.LITERAL);
+                    String regular = readRegular();
+                    if (regular == null)
+                    {
+                        // the stream is corrupt
+                        throw new DamagedFontException("Could not read token at position " +
+                                                        buffer.position());
+                    }
+                    return new Token(regular, Token.LITERAL);
                 }
                 else if (c == '<')
                 {
@@ -227,7 +252,7 @@ class Type1Lexer
     /**
      * Reads a number or returns null.
      */
-    private Token tryReadNumber()
+    private Token tryReadNumber() throws IOException
     {
         buffer.mark();
 
@@ -270,7 +295,7 @@ class Type1Lexer
             buffer.reset();
             return null;
         }
-        else
+        else if (c != 'e' && c != 'E')
         {
             // integer
             buffer.position(buffer.position() -1);
@@ -283,7 +308,7 @@ class Type1Lexer
             sb.append(c);
             c = getChar();
         }
-        else
+        else if (c != 'e' && c != 'E')
         {
             // failure
             buffer.reset();
@@ -298,7 +323,7 @@ class Type1Lexer
         }
 
         // optional E
-        if (c == 'E')
+        if (c == 'E' || c == 'e')
         {
             sb.append(c);
             c = getChar();
@@ -334,8 +359,16 @@ class Type1Lexer
         buffer.position(buffer.position() - 1);
         if (radix != null)
         {
-            Integer val = Integer.parseInt(sb.toString(), Integer.parseInt(radix.toString()));
-            return new Token(val.toString(), Token.INTEGER);
+            int val;
+            try
+            {
+                val = Integer.parseInt(sb.toString(), Integer.parseInt(radix.toString()));
+            }
+            catch (NumberFormatException ex)
+            {
+                throw new IOException("Invalid number '" + sb.toString() + "'", ex);
+            }
+            return new Token(Integer.toString(val), Token.INTEGER);
         }
         return new Token(sb.toString(), Token.REAL);
     }
@@ -344,7 +377,7 @@ class Type1Lexer
      * Reads a sequence of regular characters, i.e. not delimiters
      * or whitespace
      */
-    private String readRegular()
+    private String readRegular() throws IOException
     {
         StringBuilder sb = new StringBuilder();
         while (buffer.hasRemaining())
@@ -366,18 +399,17 @@ class Type1Lexer
                 sb.append(c);
             }
         }
-        String regular = sb.toString();
-        if (regular.length() == 0)
+        if (sb.length() == 0)
         {
             return null;
         }
-        return regular;
+        return sb.toString();
     }
 
     /**
      * Reads a line comment.
      */
-    private String readComment()
+    private String readComment() throws IOException
     {
         StringBuilder sb = new StringBuilder();
         while (buffer.hasRemaining())
@@ -398,7 +430,7 @@ class Type1Lexer
     /**
      * Reads a (string).
      */
-    private Token readString()
+    private Token readString() throws IOException
     {
         StringBuilder sb = new StringBuilder();
 
@@ -442,8 +474,15 @@ class Type1Lexer
                     if (Character.isDigit(c1))
                     {
                         String num = String.valueOf(new char[] { c1, getChar(), getChar() });
-                        Integer code = Integer.parseInt(num, 8);
-                        sb.append((char)(int)code);
+                        try
+                        {
+                            int code = Integer.parseInt(num, 8);
+                            sb.append((char) code);
+                        }
+                        catch (NumberFormatException ex)
+                        {
+                            throw new IOException(ex);
+                        }
                     }
                     break;
                 case '\r':
@@ -461,11 +500,18 @@ class Type1Lexer
     /**
      * Reads a binary CharString.
      */
-    private Token readCharString(int length)
+    private Token readCharString(int length) throws IOException
     {
-        buffer.get(); // space
-        byte[] data = new byte[length];
-        buffer.get(data);
-        return new Token(data, Token.CHARSTRING);
+        try
+        {
+	        buffer.get(); // space
+	        byte[] data = new byte[length];
+	        buffer.get(data);
+	        return new Token(data, Token.CHARSTRING);
+        }
+        catch (BufferUnderflowException exception)
+        {
+            throw new IOException("Premature end of buffer reached");
+        }
     }
 }

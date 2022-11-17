@@ -31,6 +31,7 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
 import org.apache.pdfbox.pdmodel.interactive.annotation.handlers.PDAppearanceHandler;
 import org.apache.pdfbox.pdmodel.interactive.annotation.handlers.PDCaretAppearanceHandler;
+import org.apache.pdfbox.pdmodel.interactive.annotation.handlers.PDFileAttachmentAppearanceHandler;
 import org.apache.pdfbox.pdmodel.interactive.annotation.handlers.PDFreeTextAppearanceHandler;
 import org.apache.pdfbox.pdmodel.interactive.annotation.handlers.PDInkAppearanceHandler;
 import org.apache.pdfbox.pdmodel.interactive.annotation.handlers.PDPolygonAppearanceHandler;
@@ -509,7 +510,7 @@ public class PDAnnotationMarkup extends PDAnnotation
                 COSBase base2 = array.getObject(i);
                 if (base2 instanceof COSArray)
                 {
-                    inkList[i] = ((COSArray) array.getObject(i)).toFloatArray();
+                    inkList[i] = ((COSArray) base2).toFloatArray();
                 }
                 else
                 {
@@ -833,7 +834,7 @@ public class PDAnnotationMarkup extends PDAnnotation
                 COSBase base2 = array.getObject(i);
                 if (base2 instanceof COSArray)
                 {
-                    pathArray[i] = ((COSArray) array.getObject(i)).toFloatArray();
+                    pathArray[i] = ((COSArray) base2).toFloatArray();
                 }
                 else
                 {
@@ -890,6 +891,10 @@ public class PDAnnotationMarkup extends PDAnnotation
             else if (SUB_TYPE_SOUND.equals(getSubtype()))
             {
                 appearanceHandler = new PDSoundAppearanceHandler(this, document);
+            }
+            else if (PDAnnotationFileAttachment.SUB_TYPE.equals(getSubtype()))
+            {
+                appearanceHandler = new PDFileAttachmentAppearanceHandler(this, document);
             }
 
             if (appearanceHandler != null)

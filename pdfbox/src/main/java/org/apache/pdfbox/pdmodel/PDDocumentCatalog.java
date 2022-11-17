@@ -20,6 +20,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
@@ -33,6 +36,8 @@ import org.apache.pdfbox.pdmodel.common.PDMetadata;
 import org.apache.pdfbox.pdmodel.common.PDPageLabels;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDMarkInfo;
 import org.apache.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStructureTreeRoot;
+import org.apache.pdfbox.pdmodel.fixup.AcroFormDefaultFixup;
+import org.apache.pdfbox.pdmodel.fixup.PDDocumentFixup;
 import org.apache.pdfbox.pdmodel.graphics.color.PDOutputIntent;
 import org.apache.pdfbox.pdmodel.graphics.optionalcontent.PDOptionalContentProperties;
 import org.apache.pdfbox.pdmodel.interactive.action.PDActionFactory;
@@ -53,8 +58,11 @@ import org.apache.pdfbox.pdmodel.interactive.viewerpreferences.PDViewerPreferenc
  */
 public class PDDocumentCatalog implements COSObjectable
 {
+    private static final Log LOG = LogFactory.getLog(PDDocumentCatalog.class);
+
     private final COSDictionary root;
     private final PDDocument document;
+    private PDDocumentFixup acroFormFixupApplied;
     private PDAcroForm cachedAcroForm;
 
     /**
@@ -102,9 +110,37 @@ public class PDDocumentCatalog implements COSObjectable
      */
     public PDAcroForm getAcroForm()
     {
+        return getAcroForm(new AcroFormDefaultFixup(document));
+    }
+
+    /**
+     * Get the documents AcroForm. This will return null if no AcroForm is part of the document.
+     *
+     * Dependent on setting <code>acroFormFixup</code> some fixing/changes will be done to the AcroForm.
+     * If you need to ensure that there are no fixes applied call <code>getAcroForm</code> with <code>null</code>.
+     * 
+     * Using <code>getAcroForm(PDDocumentFixup acroFormFixup)</code> might change the original content and
+     * subsequent calls with <code>getAcroForm(null)</code> will return the changed content.
+     * 
+     * @param acroFormFixup the fix up action or null
+     * @return The document's AcroForm.
+     */
+    public PDAcroForm getAcroForm(PDDocumentFixup acroFormFixup)
+    {
+        if (acroFormFixup != null && acroFormFixup != acroFormFixupApplied)
+        {
+            acroFormFixup.apply();
+            cachedAcroForm = null;
+            acroFormFixupApplied =  acroFormFixup;
+        }
+        else if (acroFormFixupApplied != null)
+        {
+            LOG.debug("AcroForm content has already been retrieved with fixes applied - original content changed because of that");
+        }
+
         if (cachedAcroForm == null)
         {
-            COSDictionary dict = (COSDictionary)root.getDictionaryObject(COSName.ACRO_FORM);
+            COSDictionary dict = root.getCOSDictionary(COSName.ACRO_FORM);
             cachedAcroForm = dict == null ? null : new PDAcroForm(document, dict);
         }
         return cachedAcroForm;
@@ -187,7 +223,7 @@ public class PDDocumentCatalog implements COSObjectable
             array = new COSArray();
             root.setItem(COSName.THREADS, array);
         }
-        List<PDThread> pdObjects = new ArrayList<PDThread>();
+        List<PDThread> pdObjects = new ArrayList<PDThread>(array.size());
         for (int i = 0; i < array.size(); i++)
         {
             pdObjects.add(new PDThread((COSDictionary)array.getObject(i)));
@@ -474,14 +510,18 @@ public class PDDocumentCatalog implements COSObjectable
     public PageLayout getPageLayout()
     {
         String mode = root.getNameAsString(COSName.PAGE_LAYOUT);
-        if (mode != null)
+        if (mode != null && !mode.isEmpty())
         {
-            return PageLayout.fromString(mode);
+            try
+            {
+                return PageLayout.fromString(mode);
+            }
+            catch (IllegalArgumentException e)
+            {
+                LOG.warn("Invalid PageLayout used '" + mode + "' - returning PageLayout.SINGLE_PAGE", e);
+            }
         }
-        else
-        {
-            return PageLayout.SINGLE_PAGE;
-        }
+        return PageLayout.SINGLE_PAGE;
     }
 
     /**

@@ -223,7 +223,8 @@ public class CmapSubtable implements CmapLookup
         if (startCode < 0 || startCode > 0x0010FFFF || (startCode + numChars) > 0x0010FFFF
                 || ((startCode + numChars) >= 0x0000D800 && (startCode + numChars) <= 0x0000DFFF))
         {
-            throw new IOException("Invalid Characters codes");
+            throw new IOException("Invalid character codes, " + 
+                    String.format("startCode: 0x%X, numChars: %d", startCode, numChars));
 
         }
     }
@@ -237,6 +238,7 @@ public class CmapSubtable implements CmapLookup
      */
     void processSubtype12(TTFDataStream data, int numGlyphs) throws IOException
     {
+        int maxGlyphId = 0;
         long nbGroups = data.readUnsignedInt();
         glyphIdToCharacterCode = newGlyphIdToCharacterCode(numGlyphs);
         characterCodeToGlyphId = new HashMap<Integer, Integer>(numGlyphs);
@@ -254,14 +256,14 @@ public class CmapSubtable implements CmapLookup
             if (firstCode < 0 || firstCode > 0x0010FFFF ||
                 firstCode >= 0x0000D800 && firstCode <= 0x0000DFFF)
             {
-                throw new IOException("Invalid characters codes");
+                throw new IOException("Invalid character code " + String.format("0x%X", firstCode));
             }
 
             if (endCode > 0 && endCode < firstCode ||
                 endCode > 0x0010FFFF ||
                 endCode >= 0x0000D800 && endCode <= 0x0000DFFF)
             {
-                throw new IOException("Invalid characters codes");
+                throw new IOException("Invalid character code " + String.format("0x%X", endCode));
             }
 
             for (long j = 0; j <= endCode - firstCode; ++j)
@@ -278,10 +280,11 @@ public class CmapSubtable implements CmapLookup
                     LOG.warn("Format 12 cmap contains character beyond UCS-4");
                 }
 
-                glyphIdToCharacterCode[(int) glyphIndex] = (int) (firstCode + j);
+                maxGlyphId = Math.max(maxGlyphId, (int) glyphIndex);
                 characterCodeToGlyphId.put((int) (firstCode + j), (int) glyphIndex);
             }
         }
+        buildGlyphIdToCharacterCodeLookup(maxGlyphId);
     }
 
     /**
@@ -315,13 +318,13 @@ public class CmapSubtable implements CmapLookup
 
             if (firstCode < 0 || firstCode > 0x0010FFFF || (firstCode >= 0x0000D800 && firstCode <= 0x0000DFFF))
             {
-                throw new IOException("Invalid Characters codes");
+                throw new IOException("Invalid character code " + String.format("0x%X", firstCode));
             }
 
             if ((endCode > 0 && endCode < firstCode) || endCode > 0x0010FFFF
                     || (endCode >= 0x0000D800 && endCode <= 0x0000DFFF))
             {
-                throw new IOException("Invalid Characters codes");
+                throw new IOException("Invalid character code " + String.format("0x%X", endCode));
             }
 
             for (long j = 0; j <= endCode - firstCode; ++j)
@@ -413,7 +416,7 @@ public class CmapSubtable implements CmapLookup
             int end = endCount[i];
             int delta = idDelta[i];
             int rangeOffset = idRangeOffset[i];
-            long segmentRangeOffset = idRangeOffsetPosition + (i * 2) + rangeOffset;
+            long segmentRangeOffset = idRangeOffsetPosition + (i * 2L) + rangeOffset;
             if (start != 65535 && end != 65535)
             {
                 for (int j = start; j <= end; j++)
@@ -426,7 +429,7 @@ public class CmapSubtable implements CmapLookup
                     }
                     else
                     {
-                        long glyphOffset = segmentRangeOffset + ((j - start) * 2);
+                        long glyphOffset = segmentRangeOffset + ((j - start) * 2L);
                         data.seek(glyphOffset);
                         int glyphIndex = data.readUnsignedShort();
                         if (glyphIndex != 0)
@@ -663,7 +666,7 @@ public class CmapSubtable implements CmapLookup
 
     private int getCharCode(int gid)
     {
-        if (gid < 0 || gid >= glyphIdToCharacterCode.length)
+        if (gid < 0 || glyphIdToCharacterCode == null || gid >= glyphIdToCharacterCode.length)
         {
             return -1;
         }

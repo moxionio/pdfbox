@@ -26,6 +26,8 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringWriter;
+import java.io.UnsupportedEncodingException;
 import java.util.List;
 import java.util.Map;
 import java.util.Vector;
@@ -43,6 +45,14 @@ import javax.swing.text.Style;
 import javax.swing.text.StyleConstants;
 import javax.swing.text.StyleContext;
 import javax.swing.text.StyledDocument;
+import javax.xml.XMLConstants;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerConfigurationException;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.contentstream.operator.Operator;
@@ -63,6 +73,8 @@ import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.util.Charsets;
+import org.apache.pdfbox.util.XMLUtil;
+import org.w3c.dom.Document;
 
 /**
  * @author Khyrul Bashar
@@ -115,11 +127,11 @@ public class StreamPane implements ActionListener
     private final JPanel panel;
     private final HexView hexView;
     private final JTabbedPane tabbedPane;
-    private final StreamPaneView view;
+    private final StreamPaneView rawView;
+    private final StreamPaneView niceView;
     private final Stream stream;
     private ToolTipController tTController;
     private PDResources resources;
-    private final boolean isContentStream;
 
     /**
      * Constructor.
@@ -133,8 +145,6 @@ public class StreamPane implements ActionListener
     public StreamPane(COSStream cosStream, boolean isContentStream, boolean isThumb,
                       COSDictionary resourcesDic) throws IOException
     {
-        this.isContentStream = isContentStream;
-
         this.stream = new Stream(cosStream, isThumb);
         if (resourcesDic != null)
         {
@@ -146,8 +156,16 @@ public class StreamPane implements ActionListener
         panel.setPreferredSize(new Dimension(300, 500));
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
 
-        view = new StreamPaneView();
+        rawView = new StreamPaneView();
         hexView = new HexView();
+        if (isContentStream || stream.isXmlMetadata())
+        {
+            niceView = new StreamPaneView();
+        }
+        else
+        {
+            niceView = null;
+        }
 
         if (stream.isImage())
         {
@@ -163,11 +181,17 @@ public class StreamPane implements ActionListener
         tabbedPane = new JTabbedPane();
         if (stream.isImage())
         {
-            tabbedPane.add("Image view", view.getStreamPanel());
+            tabbedPane.add("Image view", rawView.getStreamPanel());
+        }
+        else if (niceView != null)
+        {
+            tabbedPane.add("Nice view", niceView.getStreamPanel());
+            tabbedPane.add("Raw view", rawView.getStreamPanel());
+            tabbedPane.add("Hex view", hexView.getPane());
         }
         else
         {
-            tabbedPane.add("Text view", view.getStreamPanel());
+            tabbedPane.add("Text view", rawView.getStreamPanel());
             tabbedPane.add("Hex view", hexView.getPane());
         }
 
@@ -205,12 +229,21 @@ public class StreamPane implements ActionListener
                 {
                     requestImageShowing();
                     tabbedPane.removeAll();
-                    tabbedPane.add("Image view", view.getStreamPanel());
+                    tabbedPane.add("Image view", rawView.getStreamPanel());
                     return;
                 }
                 tabbedPane.removeAll();
-                tabbedPane.add("Text view", view.getStreamPanel());
-                tabbedPane.add("Hex view", hexView.getPane());
+                if (Stream.UNFILTERED.equals(currentFilter) && niceView != null)
+                {
+                    tabbedPane.add("Nice view", niceView.getStreamPanel());
+                    tabbedPane.add("Raw view", rawView.getStreamPanel());
+                    tabbedPane.add("Hex view", hexView.getPane());
+                }
+                else
+                {
+                    tabbedPane.add("Text view", rawView.getStreamPanel());
+                    tabbedPane.add("Hex view", hexView.getPane());
+                }
                 requestStreamText(currentFilter);
             }
             catch (IOException e)
@@ -234,13 +267,17 @@ public class StreamPane implements ActionListener
                 JOptionPane.showMessageDialog(panel, "image not available (filter missing?)");
                 return;
             }
-            view.showStreamImage(image);
+            rawView.showStreamImage(image);
         }
     }
 
     private void requestStreamText(String command) throws IOException
     {
-        new DocumentCreator(command).execute();
+        new DocumentCreator(rawView, command, false).execute();
+        if (niceView != null)
+        {
+            new DocumentCreator(niceView, command, true).execute();
+        }
         synchronized (stream)
         {
             InputStream is = stream.getStream(command);
@@ -258,13 +295,17 @@ public class StreamPane implements ActionListener
      */
     private final class DocumentCreator extends SwingWorker<StyledDocument, Integer>
     {
+        private final StreamPaneView targetView;
         private final String filterKey;
+        private final boolean nice;
         private int indent;
         private boolean needIndent;
 
-        private DocumentCreator(String filterKey)
+        private DocumentCreator(StreamPaneView targetView, String filterKey, boolean nice)
         {
+            this.targetView = targetView;
             this.filterKey = filterKey;
+            this.nice = nice;
         }
 
         @Override
@@ -279,14 +320,18 @@ public class StreamPane implements ActionListener
                     encoding = "UTF-8";
                 }
                 InputStream inputStream = stream.getStream(filterKey);
-                if (isContentStream && Stream.UNFILTERED.equals(filterKey))
+                if (nice && Stream.UNFILTERED.equals(filterKey))
                 {
+                    if (stream.isXmlMetadata())
+                    {
+                        return getXMLDocument(inputStream, encoding);
+                    }
                     StyledDocument document = getContentStreamDocument(inputStream);
                     if (document != null)
                     {
                         return document;
                     }
-                    return getDocument(stream.getStream(filterKey), encoding);
+                    return getDocument(inputStream, encoding);
                 }
                 return getDocument(inputStream, encoding);
             }
@@ -297,7 +342,7 @@ public class StreamPane implements ActionListener
         {
             try
             {
-                view.showStreamText(get(), tTController);
+                targetView.showStreamText(get(), tTController);
             }
             catch (InterruptedException e)
             {
@@ -330,6 +375,15 @@ public class StreamPane implements ActionListener
             if (inputStream != null)
             {
                 String data = getStringOfStream(inputStream, encoding);
+
+                // CR is not displayed in the raw view (see file from PDFBOX-4964),
+                // but LF is displayed, so lets first replace CR LF with LF and then
+                // replace the remaining CRs with LF
+                if (data != null)
+                {
+                    data = data.replace("\r\n", "\n").replace('\r', '\n');
+                }
+
                 try
                 {
                     docu.insertString(0, data, null);
@@ -337,6 +391,53 @@ public class StreamPane implements ActionListener
                 catch (BadLocationException e)
                 {
                     LOG.error(e.getMessage(), e);
+                }
+            }
+            return docu;
+        }
+
+        private StyledDocument getXMLDocument(InputStream inputStream, String encoding)
+        {
+            StyledDocument docu = new DefaultStyledDocument();
+            if (inputStream != null)
+            {
+                try
+                {
+                    Document doc = XMLUtil.parse(inputStream);
+                    TransformerFactory transformerFactory = TransformerFactory.newInstance();
+                    transformerFactory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+                    // XMLConstants.ACCESS_EXTERNAL_DTD in jdk 1.7
+                    transformerFactory.setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", ""); 
+                    // XMLConstants.ACCESS_EXTERNAL_STYLESHEET in jdk 1.7
+                    transformerFactory.setAttribute("http://javax.xml.XMLConstants/property/accessExternalStylesheet", "");
+                    Transformer transformer = transformerFactory.newTransformer();
+                    transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+                    transformer.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "1");
+                    StringWriter sw = new StringWriter();
+                    StreamResult result = new StreamResult(sw);
+                    DOMSource source = new DOMSource(doc);
+                    transformer.transform(source, result);
+                    docu.insertString(0, sw.toString(), null);
+                }
+                catch (UnsupportedEncodingException ex)
+                {
+                    LOG.error(ex.getMessage(), ex);
+                }
+                catch (TransformerConfigurationException ex)
+                {
+                    LOG.error(ex.getMessage(), ex);
+                }
+                catch (TransformerException ex)
+                {
+                    LOG.error(ex.getMessage(), ex);
+                }
+                catch (BadLocationException ex)
+                {
+                    LOG.error(ex.getMessage(), ex);
+                }
+                catch (IOException ex)
+                {
+                    LOG.error(ex.getMessage(), ex);
                 }
             }
             return docu;
@@ -413,17 +514,16 @@ public class StreamPane implements ActionListener
                 for (byte b : bytes)
                 {
                     int chr = b & 0xff;
-                    if (chr < 0x20 || chr > 0x7e)
-                    {
-                        // non-printable ASCII is shown as an octal escape
-                        String str = String.format("\\%03o", chr);
-                        docu.insertString(docu.getLength(), str, ESCAPE_STYLE);
-                    }
-                    else if (chr == '(' || chr == ')' || chr == '\n' || chr == '\r' ||
-                             chr == '\t' || chr == '\b' || chr == '\f' || chr == '\\')
+                    if (chr == '(' || chr == ')' || chr == '\\')
                     {
                         // PDF reserved characters must be escaped
                         String str = "\\" + (char)chr;
+                        docu.insertString(docu.getLength(), str, ESCAPE_STYLE);
+                    }
+                    else if (chr < 0x20 || chr > 0x7e)
+                    {
+                        // non-printable ASCII is shown as an octal escape
+                        String str = String.format("\\%03o", chr);
                         docu.insertString(docu.getLength(), str, ESCAPE_STYLE);
                     }
                     else

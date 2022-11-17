@@ -34,6 +34,7 @@ import java.awt.event.WindowEvent;
 import java.awt.print.PrinterException;
 import java.awt.print.PrinterJob;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
@@ -42,7 +43,9 @@ import java.net.URL;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import javax.imageio.spi.IIORegistry;
 import javax.print.attribute.HashPrintRequestAttributeSet;
 import javax.print.attribute.PrintRequestAttributeSet;
@@ -68,7 +71,11 @@ import javax.swing.border.BevelBorder;
 import javax.swing.event.TreeSelectionEvent;
 import javax.swing.event.TreeSelectionListener;
 import javax.swing.filechooser.FileFilter;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.tree.TreePath;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSBoolean;
@@ -94,7 +101,6 @@ import org.apache.pdfbox.debugger.treestatus.TreeStatusPane;
 import org.apache.pdfbox.debugger.ui.ArrayEntry;
 import org.apache.pdfbox.debugger.ui.DocumentEntry;
 import org.apache.pdfbox.debugger.ui.ErrorDialog;
-import org.apache.pdfbox.debugger.ui.ExtensionFileFilter;
 import org.apache.pdfbox.debugger.ui.FileOpenSaveDialog;
 import org.apache.pdfbox.debugger.ui.ImageTypeMenu;
 import org.apache.pdfbox.debugger.ui.LogDialog;
@@ -103,6 +109,7 @@ import org.apache.pdfbox.debugger.ui.OSXAdapter;
 import org.apache.pdfbox.debugger.ui.PDFTreeCellRenderer;
 import org.apache.pdfbox.debugger.ui.PDFTreeModel;
 import org.apache.pdfbox.debugger.ui.PageEntry;
+import org.apache.pdfbox.debugger.ui.PrintDpiMenu;
 import org.apache.pdfbox.debugger.ui.ReaderBottomPanel;
 import org.apache.pdfbox.debugger.ui.RecentFiles;
 import org.apache.pdfbox.debugger.ui.RenderDestinationMenu;
@@ -120,6 +127,7 @@ import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceCMYK;
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
 import org.apache.pdfbox.pdmodel.interactive.viewerpreferences.PDViewerPreferences;
+import org.apache.pdfbox.printing.Orientation;
 import org.apache.pdfbox.printing.PDFPageable;
 
 /**
@@ -132,12 +140,16 @@ import org.apache.pdfbox.printing.PDFPageable;
 @SuppressWarnings({"serial","squid:MaximumInheritanceDepth","squid:S1948"})
 public class PDFDebugger extends JFrame
 {
+    private static Log LOG; // needs late initialization
+
     private static final Set<COSName> SPECIALCOLORSPACES =
             new HashSet<COSName>(Arrays.asList(COSName.INDEXED, COSName.SEPARATION, COSName.DEVICEN));
 
     private static final Set<COSName> OTHERCOLORSPACES =
             new HashSet<COSName>(Arrays.asList(COSName.ICCBASED, COSName.PATTERN, COSName.CALGRAY,
                                  COSName.CALRGB, COSName.LAB));
+
+    private static final FileFilter PDF_FILTER = new FileNameExtensionFilter("PDF Files (*.pdf)", "pdf", "PDF");
 
     @SuppressWarnings({"squid:S2068"})
     private static final String PASSWORD = "-password";
@@ -166,9 +178,9 @@ public class PDFDebugger extends JFrame
     
     // file menu
     private JMenuItem saveAsMenuItem;
-    private JMenuItem saveMenuItem;
     private JMenu recentFilesMenu;
     private JMenuItem printMenuItem;
+    private JMenu printDpiMenu;
     private JMenuItem reopenMenuItem;
     
     // edit > find menu
@@ -181,7 +193,11 @@ public class PDFDebugger extends JFrame
     private JMenuItem viewModeItem;
     
     public static JCheckBoxMenuItem allowSubsampling;
-    
+    public static JCheckBoxMenuItem repairAcroFormMenuItem;
+
+    // configuration
+    public static final Properties configuration = new Properties();
+
     /**
      * Constructor.
      */
@@ -196,7 +212,29 @@ public class PDFDebugger extends JFrame
     public PDFDebugger(boolean viewPages)
     {
         isPageMode = viewPages;
+        loadConfiguration();
         initComponents();
+    }
+
+    /**
+     * Loads the local configuration file, if any.
+     */
+    private void loadConfiguration()
+    {
+        File file = new File("config.properties");
+        if (file.exists())
+        {
+            try
+            {
+                InputStream is = new FileInputStream(file);
+                configuration.load(is);
+                is.close();
+            }
+            catch(IOException e)
+            {
+                throw new RuntimeException(e);
+            }
+        }
     }
 
     /**
@@ -258,7 +296,12 @@ public class PDFDebugger extends JFrame
 
         statusPane = new TreeStatusPane(tree);
         statusPane.getPanel().setBorder(new BevelBorder(BevelBorder.RAISED));
-        statusPane.getPanel().setPreferredSize(new Dimension(300, 25));
+        Dimension preferredTreePathSize = statusPane.getPanel().getPreferredSize();
+        int treePathHeight = (int) Math.round(preferredTreePathSize.getHeight());
+        treePathHeight = Integer.parseInt(
+                configuration.getProperty("treePathHeight", Integer.toString(treePathHeight)));
+        preferredTreePathSize.height = treePathHeight;
+        statusPane.getPanel().setPreferredSize(preferredTreePathSize);
         getContentPane().add(statusPane.getPanel(), BorderLayout.PAGE_START);
 
         getContentPane().add(jSplitPane, BorderLayout.CENTER);
@@ -295,17 +338,17 @@ public class PDFDebugger extends JFrame
                     List<File> files = (List<File>) transferable.getTransferData(
                             DataFlavor.javaFileListFlavor);
                     readPDFFile(files.get(0), "");
-                    return true;
-                }
-                catch (IOException e)
-                {
-                    new ErrorDialog(e).setVisible(true);
-                    return true;
                 }
                 catch (UnsupportedFlavorException e)
                 {
-                    throw new RuntimeException(e);
+                    new ErrorDialog(e).setVisible(true);
+                    return false;
                 }
+                catch (Exception e)
+                {
+                    new ErrorDialog(e).setVisible(true);
+                }
+                return true;
             }
         });
 
@@ -408,19 +451,23 @@ public class PDFDebugger extends JFrame
         reopenMenuItem.setEnabled(false);
         fileMenu.add(reopenMenuItem);
 
-        try
-        {
-            recentFiles = new RecentFiles(this.getClass(), 5);
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException(e);
-        }
-
+        recentFiles = new RecentFiles(this.getClass(), 5);
         recentFilesMenu = new JMenu("Open Recent");
         recentFilesMenu.setEnabled(false);
         addRecentFileItems();
         fileMenu.add(recentFilesMenu);
+
+        saveAsMenuItem = new JMenuItem("Save as...");
+        saveAsMenuItem.addActionListener(new ActionListener()
+        {
+            @Override
+            public void actionPerformed(ActionEvent evt)
+            {
+                saveAsMenuItemActionPerformed(evt);
+            }
+        });
+        saveAsMenuItem.setEnabled(false);        
+        fileMenu.add(saveAsMenuItem);
 
         printMenuItem = new JMenuItem("Print");
         printMenuItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_P, SHORCUT_KEY_MASK));
@@ -437,19 +484,23 @@ public class PDFDebugger extends JFrame
         fileMenu.addSeparator();
         fileMenu.add(printMenuItem);
 
-        JMenuItem exitMenuItem = new JMenuItem("Exit");
-        exitMenuItem.setAccelerator(KeyStroke.getKeyStroke("alt F4"));
-        exitMenuItem.addActionListener(new ActionListener()
-        {
-            @Override
-            public void actionPerformed(ActionEvent evt)
-            {
-                exitMenuItemActionPerformed(evt);
-            }
-        });
+        printDpiMenu = PrintDpiMenu.getInstance().getMenu();
+        printDpiMenu.setEnabled(false);
+        fileMenu.add(printDpiMenu);
 
         if (!IS_MAC_OS)
         {
+            JMenuItem exitMenuItem = new JMenuItem("Exit");
+            exitMenuItem.setAccelerator(KeyStroke.getKeyStroke("alt F4"));
+            exitMenuItem.addActionListener(new ActionListener()
+            {
+                @Override
+                public void actionPerformed(ActionEvent evt)
+                {
+                    exitMenuItemActionPerformed(evt);
+                }
+            });
+
             fileMenu.addSeparator();
             fileMenu.add(exitMenuItem);
         }
@@ -539,7 +590,13 @@ public class PDFDebugger extends JFrame
         allowSubsampling = new JCheckBoxMenuItem("Allow subsampling");
         allowSubsampling.setEnabled(false);
         viewMenu.add(allowSubsampling);
-        
+
+        viewMenu.addSeparator();
+
+        repairAcroFormMenuItem = new JCheckBoxMenuItem("Repair AcroForm");
+        repairAcroFormMenuItem.setEnabled(false);
+        viewMenu.add(repairAcroFormMenuItem);
+
         return viewMenu;
     }
     
@@ -624,7 +681,7 @@ public class PDFDebugger extends JFrame
         }
         catch (IOException e)
         {
-            throw new RuntimeException(e);
+            new ErrorDialog(e).setVisible(true);
         }
     }
 
@@ -634,6 +691,41 @@ public class PDFDebugger extends JFrame
     private void osxQuit()
     {
         exitMenuItemActionPerformed(null);
+    }
+
+    private void saveAsMenuItemActionPerformed(ActionEvent evt)
+    {
+        try
+        {
+            if (IS_MAC_OS)
+            {
+                FileDialog openDialog = new FileDialog(this, "Save", FileDialog.SAVE);
+                openDialog.setFilenameFilter(new FilenameFilter()
+                {
+                    @Override
+                    public boolean accept(File dir, String name)
+                    {
+                        return name.toLowerCase().endsWith(".pdf");
+                    }
+                });
+                openDialog.setVisible(true);
+                String file = openDialog.getFile();
+                if (file != null)
+                {
+                    document.setAllSecurityToBeRemoved(true);
+                    document.save(file);
+                }
+            }
+            else
+            {
+                FileOpenSaveDialog saveAsDialog = new FileOpenSaveDialog(this, PDF_FILTER);
+                saveAsDialog.saveDocument(document, "pdf");
+            }
+        }
+        catch (IOException e)
+        {
+            new ErrorDialog(e).setVisible(true);
+        }
     }
 
     private void openMenuItemActionPerformed(ActionEvent evt)
@@ -659,9 +751,7 @@ public class PDFDebugger extends JFrame
             }
             else
             {
-                String[] extensions = new String[] {"pdf", "PDF"};
-                FileFilter pdfFilter = new ExtensionFileFilter(extensions, "PDF Files (*.pdf)");
-                FileOpenSaveDialog openDialog = new FileOpenSaveDialog(this, pdfFilter);
+                FileOpenSaveDialog openDialog = new FileOpenSaveDialog(this, PDF_FILTER);
 
                 File file = openDialog.openFile();
                 if (file != null)
@@ -672,7 +762,7 @@ public class PDFDebugger extends JFrame
         }
         catch (IOException e)
         {
-            throw new RuntimeException(e);
+            new ErrorDialog(e).setVisible(true);
         }
     }
 
@@ -816,16 +906,14 @@ public class PDFDebugger extends JFrame
     {
         Object underneathObject = getUnderneathObject(obj);
         return underneathObject instanceof COSDictionary &&
-                ((COSDictionary) underneathObject).containsKey(COSName.TYPE) &&
-                ((COSDictionary) underneathObject).getCOSName(COSName.TYPE).equals(COSName.FONT_DESC);
+                COSName.FONT_DESC.equals(((COSDictionary) underneathObject).getCOSName(COSName.TYPE));
     }
 
     private boolean isAnnot(Object obj)
     {
         Object underneathObject = getUnderneathObject(obj);
         return underneathObject instanceof COSDictionary &&
-                ((COSDictionary) underneathObject).containsKey(COSName.TYPE) &&
-                ((COSDictionary) underneathObject).getCOSName(COSName.TYPE).equals(COSName.ANNOT);
+                COSName.ANNOT.equals(((COSDictionary) underneathObject).getCOSName(COSName.TYPE));
     }
 
     private boolean isStream(Object selectedNode)
@@ -843,19 +931,16 @@ public class PDFDebugger extends JFrame
         selectedNode = getUnderneathObject(selectedNode);
         if (selectedNode instanceof COSDictionary)
         {
-            COSDictionary dic = (COSDictionary)selectedNode;
-            return dic.containsKey(COSName.TYPE) &&
-                    dic.getCOSName(COSName.TYPE).equals(COSName.FONT) &&
-                    !isCIDFont(dic);
+            COSDictionary dic = (COSDictionary) selectedNode;
+            return COSName.FONT.equals(dic.getCOSName(COSName.TYPE)) && !isCIDFont(dic);
         }
         return false;
     }
 
     private boolean isCIDFont(COSDictionary dic)
     {
-        return dic.containsKey(COSName.SUBTYPE) &&
-                (dic.getCOSName(COSName.SUBTYPE).equals(COSName.CID_FONT_TYPE0)
-                || dic.getCOSName(COSName.SUBTYPE).equals(COSName.CID_FONT_TYPE2));
+        return COSName.CID_FONT_TYPE0.equals(dic.getCOSName(COSName.SUBTYPE)) ||
+               COSName.CID_FONT_TYPE2.equals(dic.getCOSName(COSName.SUBTYPE));
     }
 
     /**
@@ -996,6 +1081,33 @@ public class PDFDebugger extends JFrame
     private void replaceRightComponent(Component pane)
     {
         int div = jSplitPane.getDividerLocation();
+        
+        // Avoid memory leak with the display image
+        // if anyone knows a better way to do this, please tell
+        Component rightComponent = jSplitPane.getRightComponent();
+        if (rightComponent instanceof JScrollPane)
+        {
+            JScrollPane scrollPane = (JScrollPane) rightComponent;
+            Component view = scrollPane.getViewport().getView();
+            if (view instanceof JPanel)
+            {
+                JPanel panel = (JPanel) view;
+                for (Component component : panel.getComponents())
+                {
+                    if (component instanceof JLabel)
+                    {
+                        ((JLabel) component).setIcon(null);
+                    }
+                }
+                panel.removeAll();
+                scrollPane.getViewport().setView(null);
+                scrollPane.getViewport().removeAll();
+                scrollPane.setViewport(null);
+                scrollPane.removeAll();
+                // still leaks but it's really the image that bothers; listeners still active
+            }
+        }
+
         jSplitPane.setRightComponent(pane);
         jSplitPane.setDividerLocation(div);
     }
@@ -1118,7 +1230,8 @@ public class PDFDebugger extends JFrame
             }
             catch( IOException e )
             {
-                throw new RuntimeException(e);
+                // no dialogbox, don't interfere with exit wish
+                e.printStackTrace();
             }
         }
         windowPrefs.setExtendedState(getExtendedState());
@@ -1154,7 +1267,7 @@ public class PDFDebugger extends JFrame
         try
         {
             PrinterJob job = PrinterJob.getPrinterJob();
-            job.setPageable(new PDFPageable(document));
+            job.setPageable(new PDFPageable(document, Orientation.AUTO, false, PrintDpiMenu.getDpiSelection()));
             PrintRequestAttributeSet pras = new HashPrintRequestAttributeSet();
             PDViewerPreferences vp = document.getDocumentCatalog().getViewerPreferences();
             if (vp != null && vp.getDuplex() != null)
@@ -1178,7 +1291,11 @@ public class PDFDebugger extends JFrame
                 setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
                 try
                 {
+                    long t0 = System.nanoTime();
                     job.print(pras);
+                    long t1 = System.nanoTime();
+                    long ms = TimeUnit.MILLISECONDS.convert(t1 - t0, TimeUnit.NANOSECONDS);
+                    LOG.info("Printed in " + ms + " ms");
                 }
                 finally
                 {
@@ -1188,7 +1305,7 @@ public class PDFDebugger extends JFrame
         }
         catch (PrinterException e)
         {
-            throw new RuntimeException(e);
+            new ErrorDialog(e).setVisible(true);
         }
     }
 
@@ -1245,11 +1362,12 @@ public class PDFDebugger extends JFrame
         final PDFDebugger viewer = new PDFDebugger(viewPages);
 
         // use our custom logger
-        // this works only if there is no "LogFactory.getLog()" in this class,
+        // this works only if there is no earlier "LogFactory.getLog()" in this class,
         // and if there are no methods that call logging, even invisible
         // use reduced file from PDFBOX-3653 to see logging
         LogDialog.init(viewer, viewer.statusBar.getLogLabel());
         System.setProperty("org.apache.commons.logging.Log", "org.apache.pdfbox.debugger.ui.DebugLog");
+        LOG = LogFactory.getLog(PDFDebugger.class);
 
         // trigger premature initializations for more accurate rendering benchmarks
         // See discussion in PDFBOX-3988
@@ -1291,17 +1409,25 @@ public class PDFDebugger extends JFrame
         }
         currentFilePath = file.getPath();
         recentFiles.removeFile(file.getPath());
+        LogDialog.instance().clear();
         DocumentOpener documentOpener = new DocumentOpener(password)
         {
             @Override
             PDDocument open() throws IOException
             {
-                return PDDocument.load(file, password);
+                long t0 = System.nanoTime();
+                PDDocument doc = PDDocument.load(file, password);
+                long t1 = System.nanoTime();
+                long ms = TimeUnit.MILLISECONDS.convert(t1 - t0, TimeUnit.NANOSECONDS);
+                LOG.info("Parsed in " + ms + " ms");
+                return doc;
             }
         };
         document = documentOpener.parse();
         printMenuItem.setEnabled(true);
+        printDpiMenu.setEnabled(true);
         reopenMenuItem.setEnabled(true);
+        saveAsMenuItem.setEnabled(true);
         
         initTree();
         
@@ -1328,17 +1454,24 @@ public class PDFDebugger extends JFrame
             }
         }
         currentFilePath = urlString;
+        LogDialog.instance().clear();
         DocumentOpener documentOpener = new DocumentOpener(password)
         {
             @Override
             PDDocument open() throws IOException
             {
-                return PDDocument.load(new URL(urlString).openStream(), password);
+                long t0 = System.nanoTime();
+                PDDocument doc = PDDocument.load(new URL(urlString).openStream(), password);
+                long t1 = System.nanoTime();
+                long ms = TimeUnit.MILLISECONDS.convert(t1 - t0, TimeUnit.NANOSECONDS);
+                LOG.info("Parsed in " + ms + " ms");
+                return doc;
             }
         };
         document = documentOpener.parse();
         printMenuItem.setEnabled(true);
         reopenMenuItem.setEnabled(true);
+        saveAsMenuItem.setEnabled(true);
 
         initTree();
 
@@ -1380,7 +1513,7 @@ public class PDFDebugger extends JFrame
     /**
      * Internal class to avoid double code in password entry loop.
      */
-    abstract class DocumentOpener
+    abstract static class DocumentOpener
     {
         String password;
 
@@ -1392,16 +1525,16 @@ public class PDFDebugger extends JFrame
         /**
          * Override to load the actual input type (File, URL, stream), don't call it directly!
          * 
-         * @return
-         * @throws IOException 
+         * @return the PDDocument instance
+         * @throws IOException Cannot read document
          */
         abstract PDDocument open() throws IOException;
 
         /**
          * Call this!
          * 
-         * @return
-         * @throws IOException 
+         * @return the PDDocument instance
+         * @throws IOException Cannot read document
          */
         final PDDocument parse() throws IOException 
         {

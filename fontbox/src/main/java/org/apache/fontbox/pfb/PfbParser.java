@@ -34,7 +34,7 @@ import java.util.Arrays;
 public class PfbParser 
 {
     /**
-     * the pdf header length.
+     * the pfb header length.
      * (start-marker (1 byte), ascii-/binary-marker (1 byte), size (4 byte))
      * 3*6 == 18
      */
@@ -88,7 +88,20 @@ public class PfbParser
      */
     public PfbParser(final String filename) throws IOException 
     {
-        this( new BufferedInputStream(new FileInputStream(filename),BUFFER_SIZE) );
+        BufferedInputStream in = null;
+        try
+        {
+            in = new BufferedInputStream(new FileInputStream(filename), BUFFER_SIZE);
+            byte[] pfb = readFully(in);
+            parsePfb(pfb);
+        }
+        finally
+        {
+            if (in != null)
+            {
+                in.close();
+            }
+        }
     }
 
     /**
@@ -98,7 +111,7 @@ public class PfbParser
      */
     public PfbParser(final InputStream in) throws IOException 
     {
-        byte[] pfb = readPfbInput(in);
+        byte[] pfb = readFully(in);
         parsePfb(pfb);
     }
 
@@ -119,7 +132,10 @@ public class PfbParser
      */
     private void parsePfb(final byte[] pfb) throws IOException 
     {
-
+        if (pfb.length < PFB_HEADER_LENGTH)
+        {
+            throw new IOException("PFB header missing");
+        }
         ByteArrayInputStream in = new ByteArrayInputStream(pfb);
         pfbdata = new byte[pfb.length - PFB_HEADER_LENGTH];
         lengths = new int[PFB_RECORDS.length];
@@ -151,9 +167,9 @@ public class PfbParser
             }
             if (size > pfbdata.length - pointer)
             {
-                throw new IOException("PFB record size (" + size +
-                        ") doesn't fit in buffer, position: " + pointer +
-                        ", total length: " + pfbdata.length);
+                throw new EOFException("attempted to read " + size + " bytes at position " + pointer +
+                        " into array of size " + pfbdata.length + ", but only space for " + 
+                        (pfbdata.length - pointer) + " bytes left");
             }
             int got = in.read(pfbdata, pointer, size);
             if (got < 0) 
@@ -165,17 +181,17 @@ public class PfbParser
     }
 
     /**
-     * Read the pdf input.
+     * Read the pfb input.
      * @param in    The input.
-     * @return Returns the pdf-array.
+     * @return Returns the pfb-array.
      * @throws IOException if an IO-error occurs.
      */
-    private byte[] readPfbInput(final InputStream in) throws IOException 
+    private byte[] readFully(final InputStream in) throws IOException 
     {
         // copy into an array
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] tmpbuf = new byte[BUFFER_SIZE];
-        int amountRead = -1;
+        int amountRead;
         while ((amountRead = in.read(tmpbuf)) != -1) 
         {
             out.write(tmpbuf, 0, amountRead);

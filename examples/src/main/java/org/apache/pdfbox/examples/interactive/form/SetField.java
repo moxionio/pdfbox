@@ -54,7 +54,15 @@ public class SetField
         {
             if (field instanceof PDCheckBox)
             {
-                field.setValue("Yes");
+                PDCheckBox checkbox = (PDCheckBox) field;
+                if (value.isEmpty())
+                {
+                    checkbox.unCheck();
+                }
+                else
+                {
+                    checkbox.check();
+                }
             }
             else if (field instanceof PDComboBox)
             {
@@ -108,7 +116,7 @@ public class SetField
                 SetField example = new SetField();
                 pdf = PDDocument.load(new File(args[0]));
                 example.setField(pdf, args[1], args[2]);
-                pdf.save(args[0]);
+                pdf.save(calculateOutputFilename(args[0]));
             }
         }
         finally
@@ -118,6 +126,21 @@ public class SetField
                 pdf.close();
             }
         }
+    }
+
+    private static String calculateOutputFilename(String filename)
+    {
+        String outputFilename;
+        if (filename.toLowerCase().endsWith(".pdf"))
+        {
+            outputFilename = filename.substring(0, filename.length() - 4);
+        }
+        else
+        {
+            outputFilename = filename;
+        }
+        outputFilename += "_filled.pdf";
+        return outputFilename;
     }
 
     /**

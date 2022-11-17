@@ -38,8 +38,8 @@ import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSNumber;
-import org.apache.pdfbox.cos.COSObject;
 import org.apache.pdfbox.cos.COSString;
+import org.apache.pdfbox.filter.Filter;
 import org.apache.pdfbox.filter.MissingImageReaderException;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.pdmodel.MissingResourceException;
@@ -77,6 +77,9 @@ public abstract class PDFStreamEngine
     private static final Log LOG = LogFactory.getLog(PDFStreamEngine.class);
 
     private final Map<String, OperatorProcessor> operators = new HashMap<String, OperatorProcessor>(80);
+
+    public static final String SYSPROP_STRICTOPERATOREXCEPTION = "org.apache.pdfbox.contentstream.pdfstreamengine.strictoperatorexception";
+    private static final boolean strictException = Boolean.getBoolean(SYSPROP_STRICTOPERATOREXCEPTION);
 
     private Matrix textMatrix;
     private Matrix textLineMatrix;
@@ -223,30 +226,36 @@ public abstract class PDFStreamEngine
         Deque<PDGraphicsState> savedStack = saveGraphicsStack();
         
         Matrix parentMatrix = initialMatrix;
+        PDGraphicsState graphicsState = getGraphicsState();
 
         // the stream's initial matrix includes the parent CTM, e.g. this allows a scaled form
-        initialMatrix = getGraphicsState().getCurrentTransformationMatrix().clone();
+        initialMatrix = graphicsState.getCurrentTransformationMatrix().clone();
 
         // transform the CTM using the stream's matrix
-        getGraphicsState().getCurrentTransformationMatrix().concatenate(group.getMatrix());
+        graphicsState.getCurrentTransformationMatrix().concatenate(group.getMatrix());
 
         // Before execution of the transparency group XObject’s content stream, 
         // the current blend mode in the graphics state shall be initialized to Normal, 
         // the current stroking and nonstroking alpha constants to 1.0, and the current soft mask to None.
-        getGraphicsState().setBlendMode(BlendMode.NORMAL);
-        getGraphicsState().setAlphaConstant(1);
-        getGraphicsState().setNonStrokeAlphaConstant(1);
-        getGraphicsState().setSoftMask(null);
+        graphicsState.setBlendMode(BlendMode.NORMAL);
+        graphicsState.setAlphaConstant(1);
+        graphicsState.setNonStrokeAlphaConstant(1);
+        graphicsState.setSoftMask(null);
 
         // clip to bounding box
         clipToRect(group.getBBox());
 
-        processStreamOperators(group);
-        
-        initialMatrix = parentMatrix;
+        try
+        {
+            processStreamOperators(group);
+        }
+        finally
+        {
+            initialMatrix = parentMatrix;
 
-        restoreGraphicsStack(savedStack);
-        popResources(parent);
+            restoreGraphicsStack(savedStack);
+            popResources(parent);
+        }
     }
 
     /**
@@ -272,7 +281,7 @@ public abstract class PDFStreamEngine
         getGraphicsState().setCurrentTransformationMatrix(textRenderingMatrix);
 
         // transform the CTM using the stream's matrix (this is the FontMatrix)
-        getGraphicsState().getCurrentTransformationMatrix().concatenate(charProc.getMatrix());
+        textRenderingMatrix.concatenate(charProc.getMatrix());
 
         // note: we don't clip to the BBox as it is often wrong, see PDFBOX-1917
 
@@ -282,14 +291,19 @@ public abstract class PDFStreamEngine
         Matrix textLineMatrixOld = textLineMatrix;
         textLineMatrix = new Matrix();
 
-        processStreamOperators(charProc);
+        try
+        {
+            processStreamOperators(charProc);
+        }
+        finally
+        {
+            // restore text matrices
+            textMatrix = textMatrixOld;
+            textLineMatrix = textLineMatrixOld;
 
-        // restore text matrices
-        textMatrix = textMatrixOld;
-        textLineMatrix = textLineMatrixOld;
-
-        restoreGraphicsStack(savedStack);
-        popResources(parent);
+            restoreGraphicsStack(savedStack);
+            popResources(parent);
+        }
     }
 
     /**
@@ -302,17 +316,18 @@ public abstract class PDFStreamEngine
     protected void processAnnotation(PDAnnotation annotation, PDAppearanceStream appearance)
             throws IOException
     {
-        PDResources parent = pushResources(appearance);
-        Deque<PDGraphicsState> savedStack = saveGraphicsStack();
-
         PDRectangle bbox = appearance.getBBox();
         PDRectangle rect = annotation.getRectangle();
-        Matrix matrix = appearance.getMatrix();
 
         // zero-sized rectangles are not valid
         if (rect != null && rect.getWidth() > 0 && rect.getHeight() > 0 &&
             bbox != null && bbox.getWidth() > 0 && bbox.getHeight() > 0)
         {
+            PDResources parent = pushResources(appearance);
+            Deque<PDGraphicsState> savedStack = saveGraphicsStack();
+
+            Matrix matrix = appearance.getMatrix();
+
             // transformed appearance box  fixme: may be an arbitrary shape
             Rectangle2D transformedBox = bbox.transform(matrix).getBounds2D();
 
@@ -340,11 +355,16 @@ public abstract class PDFStreamEngine
             // needed for patterns in appearance streams, e.g. PDFBOX-2182
             initialMatrix = aa.clone();
 
-            processStreamOperators(appearance);
+            try
+            {
+                processStreamOperators(appearance);
+            }
+            finally
+            {
+                restoreGraphicsStack(savedStack);
+                popResources(parent);
+            }
         }
-        
-        restoreGraphicsStack(savedStack);
-        popResources(parent);
     }
 
     /**
@@ -384,37 +404,45 @@ public abstract class PDFStreamEngine
         Deque<PDGraphicsState> savedStack = saveGraphicsStack();
 
         // save a clean state (new clipping path, line path, etc.)
+        PDRectangle tilingBBox = tilingPattern.getBBox();
         Rectangle2D bbox = tilingPattern.getBBox().transform(patternMatrix).getBounds2D();
         PDRectangle rect = new PDRectangle((float)bbox.getX(), (float)bbox.getY(),
                 (float)bbox.getWidth(), (float)bbox.getHeight());
         graphicsStack.push(new PDGraphicsState(rect));
+        PDGraphicsState graphicsState = getGraphicsState();
 
         // non-colored patterns have to be given a color
         if (colorSpace != null)
         {
             color = new PDColor(color.getComponents(), colorSpace);
-            getGraphicsState().setNonStrokingColorSpace(colorSpace);
-            getGraphicsState().setNonStrokingColor(color);
-            getGraphicsState().setStrokingColorSpace(colorSpace);
-            getGraphicsState().setStrokingColor(color);
+            graphicsState.setNonStrokingColorSpace(colorSpace);
+            graphicsState.setNonStrokingColor(color);
+            graphicsState.setStrokingColorSpace(colorSpace);
+            graphicsState.setStrokingColor(color);
         }
 
         // transform the CTM using the stream's matrix
-        getGraphicsState().getCurrentTransformationMatrix().concatenate(patternMatrix);
+        graphicsState.getCurrentTransformationMatrix().concatenate(patternMatrix);
 
         // clip to bounding box
-        clipToRect(tilingPattern.getBBox());
+        clipToRect(tilingBBox);
 
         // save text matrices (pattern stream may contain BT/ET, see PDFBOX-4896)
         Matrix textMatrixSave = textMatrix;
         Matrix textLineMatrixSave = textLineMatrix;
-        processStreamOperators(tilingPattern);
-        textMatrix = textMatrixSave;
-        textLineMatrix = textLineMatrixSave;
-        
-        initialMatrix = parentMatrix;
-        restoreGraphicsStack(savedStack);
-        popResources(parent);
+
+        try
+        {
+            processStreamOperators(tilingPattern);
+        }
+        finally
+        {
+            textMatrix = textMatrixSave;
+            textLineMatrix = textLineMatrixSave;
+            initialMatrix = parentMatrix;
+            restoreGraphicsStack(savedStack);
+            popResources(parent);
+        }
     }
 
     /**
@@ -475,22 +503,28 @@ public abstract class PDFStreamEngine
         PDResources parent = pushResources(contentStream);
         Deque<PDGraphicsState> savedStack = saveGraphicsStack();
         Matrix parentMatrix = initialMatrix;
+        PDGraphicsState graphicsState = getGraphicsState();
 
         // transform the CTM using the stream's matrix
-        getGraphicsState().getCurrentTransformationMatrix().concatenate(contentStream.getMatrix());
+        graphicsState.getCurrentTransformationMatrix().concatenate(contentStream.getMatrix());
 
         // the stream's initial matrix includes the parent CTM, e.g. this allows a scaled form
-        initialMatrix = getGraphicsState().getCurrentTransformationMatrix().clone();
+        initialMatrix = graphicsState.getCurrentTransformationMatrix().clone();
 
         // clip to bounding box
         PDRectangle bbox = contentStream.getBBox();
         clipToRect(bbox);
 
-        processStreamOperators(contentStream);
-
-        initialMatrix = parentMatrix;
-        restoreGraphicsStack(savedStack);
-        popResources(parent);
+        try
+        {
+            processStreamOperators(contentStream);
+        }
+        finally
+        {
+            initialMatrix = parentMatrix;
+            restoreGraphicsStack(savedStack);
+            popResources(parent);
+        }
     }
 
     /**
@@ -506,14 +540,10 @@ public abstract class PDFStreamEngine
         Object token = parser.parseNextToken();
         while (token != null)
         {
-            if (token instanceof COSObject)
-            {
-                arguments.add(((COSObject) token).getObject());
-            }
-            else if (token instanceof Operator)
+            if (token instanceof Operator)
             {
                 processOperator((Operator) token, arguments);
-                arguments = new ArrayList<COSBase>();
+                arguments.clear();
             }
             else
             {
@@ -543,13 +573,14 @@ public abstract class PDFStreamEngine
         else
         {
             resources = currentPage.getResources();
+
+            // resources are required in PDF
+            if (resources == null)
+            {
+                resources = new PDResources();
+            }
         }
 
-        // resources are required in PDF
-        if (resources == null)
-        {
-            resources = new PDResources();
-        }
         return parentResources;
     }
 
@@ -569,8 +600,9 @@ public abstract class PDFStreamEngine
     {
         if (rectangle != null)
         {
-            GeneralPath clip = rectangle.transform(getGraphicsState().getCurrentTransformationMatrix());
-            getGraphicsState().intersectClippingPath(clip);
+            PDGraphicsState graphicsState = getGraphicsState();
+            GeneralPath clip = rectangle.transform(graphicsState.getCurrentTransformationMatrix());
+            graphicsState.intersectClippingPath(clip);
         }
     }
 
@@ -652,9 +684,14 @@ public abstract class PDFStreamEngine
                 byte[] string = ((COSString)obj).getBytes();
                 showText(string);
             }
+            else if (obj instanceof COSArray)
+            {
+                LOG.error("Nested arrays are not allowed in an array for TJ operation: " + obj);
+            }
             else
             {
-                throw new IOException("Unknown type in array for TJ operation:" + obj);
+                LOG.error("Unknown type " + obj.getClass().getSimpleName()
+                        + " in array for TJ operation: " + obj);
             }
         }
     }
@@ -894,7 +931,7 @@ public abstract class PDFStreamEngine
     }
 
     /**
-     * Called when a a marked content group ends
+     * Called when a marked content group ends
      */
     public void endMarkedContentSequence()
     {
@@ -968,7 +1005,10 @@ public abstract class PDFStreamEngine
     protected void operatorException(Operator operator, List<COSBase> operands, IOException e)
             throws IOException
     {
-        if (e instanceof MissingOperandException ||
+        if (strictException) {
+            throw e;
+        }
+        else if (e instanceof MissingOperandException ||
             e instanceof MissingResourceException ||
             e instanceof MissingImageReaderException)
         {
@@ -1014,7 +1054,7 @@ public abstract class PDFStreamEngine
     protected final Deque<PDGraphicsState> saveGraphicsStack()
     {
         Deque<PDGraphicsState> savedStack = graphicsStack;
-        graphicsStack = new ArrayDeque<PDGraphicsState>();
+        graphicsStack = new ArrayDeque<PDGraphicsState>(1);
         graphicsStack.add(savedStack.peek().clone());
         return savedStack;
     }

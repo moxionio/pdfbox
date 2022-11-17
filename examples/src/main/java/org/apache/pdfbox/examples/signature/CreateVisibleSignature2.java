@@ -80,7 +80,7 @@ public class CreateVisibleSignature2 extends CreateSignatureBase
 {
     private SignatureOptions signatureOptions;
     private boolean lateExternalSigning = false;
-    private File imageFile;
+    private File imageFile = null;
 
     /**
      * Initialize the signature creator with a keystore (pkcs12) and pin that
@@ -164,6 +164,11 @@ public class CreateVisibleSignature2 extends CreateSignatureBase
         FileOutputStream fos = new FileOutputStream(signedFile);
 
         PDDocument doc = PDDocument.load(inputFile);
+
+        // call SigUtils.checkCrossReferenceTable(doc) if Adobe complains
+        // and read https://stackoverflow.com/a/71293901/535646
+        // and https://issues.apache.org/jira/browse/PDFBOX-5382
+
         int accessPermissions = SigUtils.getMDPPermission(doc);
         if (accessPermissions == 1)
         {
@@ -174,7 +179,7 @@ public class CreateVisibleSignature2 extends CreateSignatureBase
         // be careful with such files.
 
         PDSignature signature = null;
-        PDAcroForm acroForm = doc.getDocumentCatalog().getAcroForm();
+        PDAcroForm acroForm = doc.getDocumentCatalog().getAcroForm(null);
         PDRectangle rect = null;
 
         // sign a PDF with an existing empty signature, as created by the CreateEmptySignatureForm example.
@@ -399,7 +404,7 @@ public class CreateVisibleSignature2 extends CreateSignatureBase
 
         PDPageContentStream cs = new PDPageContentStream(doc, appearanceStream);
 
-        // for 90Â° and 270Â° scale ratio of width / height
+        // for 90° and 270° scale ratio of width / height
         // not really sure about this
         // why does scale have no effect when done in the form matrix???
         if (initialScale != null)
@@ -412,13 +417,16 @@ public class CreateVisibleSignature2 extends CreateSignatureBase
         cs.addRect(-5000, -5000, 10000, 10000);
         cs.fill();
 
-        // show background image
-        // save and restore graphics if the image is too large and needs to be scaled
-        cs.saveGraphicsState();
-        cs.transform(Matrix.getScaleInstance(0.25f, 0.25f));
-        PDImageXObject img = PDImageXObject.createFromFileByExtension(imageFile, doc);
-        cs.drawImage(img, 0, 0);
-        cs.restoreGraphicsState();
+        if (imageFile != null)
+        {
+            // show background image
+            // save and restore graphics if the image is too large and needs to be scaled
+            cs.saveGraphicsState();
+            cs.transform(Matrix.getScaleInstance(0.25f, 0.25f));
+            PDImageXObject img = PDImageXObject.createFromFileByExtension(imageFile, doc);
+            cs.drawImage(img, 0, 0);
+            cs.restoreGraphicsState();
+        }
 
         // show text
         float fontSize = 10;
@@ -504,9 +512,7 @@ public class CreateVisibleSignature2 extends CreateSignatureBase
     public static void main(String[] args) throws KeyStoreException, CertificateException,
             IOException, NoSuchAlgorithmException, UnrecoverableKeyException
     {
-        // generate with
-        // keytool -storepass 123456 -storetype PKCS12 -keystore file.p12 -genkey -alias client -keyalg RSA
-        if (args.length < 4)
+        if (args.length < 3)
         {
             usage();
             System.exit(1);
@@ -537,13 +543,18 @@ public class CreateVisibleSignature2 extends CreateSignatureBase
         File ksFile = new File(args[0]);
         KeyStore keystore = KeyStore.getInstance("PKCS12");
         char[] pin = args[1].toCharArray();
-        keystore.load(new FileInputStream(ksFile), pin);
+        InputStream is = new FileInputStream(ksFile);
+        keystore.load(is, pin);
+        is.close();
 
         File documentFile = new File(args[2]);
 
         CreateVisibleSignature2 signing = new CreateVisibleSignature2(keystore, pin.clone());
 
-        signing.setImageFile(new File(args[3]));
+        if (args.length >= 4 && !"-tsa".equals(args[3]))
+        {
+            signing.setImageFile(new File(args[3]));
+        }
 
         File signedDocumentFile;
         String name = documentFile.getName();
@@ -572,6 +583,9 @@ public class CreateVisibleSignature2 extends CreateSignatureBase
                            "options:\n" +
                            "  -tsa <url>    sign timestamp using the given TSA server\n"+
                            "  -e            sign using external signature creation scenario");
+
+        // generate pkcs12-keystore-file with
+        // keytool -storepass 123456 -storetype PKCS12 -keystore file.p12 -genkey -alias client -keyalg RSA
     }
 
 }

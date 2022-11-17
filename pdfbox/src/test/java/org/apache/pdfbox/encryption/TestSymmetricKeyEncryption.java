@@ -97,7 +97,7 @@ public class TestSymmetricKeyEncryption extends TestCase
         permission.setCanModify(false);
         permission.setCanModifyAnnotations(false);
         permission.setCanPrint(true);
-        permission.setCanPrintDegraded(false);
+        permission.setCanPrintFaithful(false);
         permission.setReadOnly();
     }
 
@@ -133,7 +133,7 @@ public class TestSymmetricKeyEncryption extends TestCase
 
         restrAP.setCanAssembleDocument(false);
         restrAP.setCanExtractForAccessibility(false);
-        restrAP.setCanPrintDegraded(false);
+        restrAP.setCanPrintFaithful(false);
 
         inputFileAsByteArray = getFileResourceAsByteArray("PasswordSample-128bit.pdf");
         checkPerms(inputFileAsByteArray, "owner", fullAP);
@@ -182,7 +182,7 @@ public class TestSymmetricKeyEncryption extends TestCase
         assertEquals(expectedPermissions.canModify(), currentAccessPermission.canModify());
         assertEquals(expectedPermissions.canModifyAnnotations(), currentAccessPermission.canModifyAnnotations());
         assertEquals(expectedPermissions.canPrint(), currentAccessPermission.canPrint());
-        assertEquals(expectedPermissions.canPrintDegraded(), currentAccessPermission.canPrintDegraded());
+        assertEquals(expectedPermissions.canPrintFaithful(), currentAccessPermission.canPrintFaithful());
 
         new PDFRenderer(doc).renderImage(0);
 
@@ -372,9 +372,9 @@ public class TestSymmetricKeyEncryption extends TestCase
         doc.save(pdfFile);
         doc.close();
         long sizeEncrypted = pdfFile.length();
-        Assert.assertTrue(keyLength
+        Assert.assertNotEquals(keyLength
                 + "-bit " + (preferAES ? "AES" : "RC4") + " encrypted pdf should not have same size as plain one",
-                sizeEncrypted != sizePriorToEncr);
+                sizeEncrypted, sizePriorToEncr);
 
         // test with owner password => full permissions
         PDDocument encryptedDoc = PDDocument.load(pdfFile, ownerpassword);

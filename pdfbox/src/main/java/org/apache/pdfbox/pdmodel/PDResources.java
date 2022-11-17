@@ -204,7 +204,7 @@ public final class PDResources implements COSObjectable
         }
 
         // we can't cache PDPattern, because it holds page resources, see PDFBOX-2370
-        if (cache != null && !(colorSpace instanceof PDPattern))
+        if (cache != null && indirect != null && !(colorSpace instanceof PDPattern))
         {
             cache.put(indirect, colorSpace);
         }
@@ -250,7 +250,7 @@ public final class PDResources implements COSObjectable
             extGState = new PDExtendedGraphicsState((COSDictionary) base);
         }
 
-        if (cache != null)
+        if (cache != null && indirect != null)
         {
             cache.put(indirect, extGState);
         }
@@ -286,7 +286,7 @@ public final class PDResources implements COSObjectable
             shading = PDShading.create((COSDictionary) base);
         }
         
-        if (cache != null)
+        if (cache != null && indirect != null)
         {
             cache.put(indirect, shading);
         }
@@ -322,7 +322,7 @@ public final class PDResources implements COSObjectable
             pattern = PDAbstractPattern.create((COSDictionary) base, getResourceCache());
         }
 
-        if (cache != null)
+        if (cache != null && indirect != null)
         {
             cache.put(indirect, pattern);
         }
@@ -356,7 +356,7 @@ public final class PDResources implements COSObjectable
             propertyList = PDPropertyList.create((COSDictionary) base);
         }
 
-        if (cache != null)
+        if (cache != null && indirect != null)
         {
             cache.put(indirect, propertyList);
         }
@@ -425,7 +425,7 @@ public final class PDResources implements COSObjectable
         {
             xobject = PDXObject.createXObject(value, this);
         }
-        if (cache != null && isAllowedCache(xobject))
+        if (cache != null && indirect != null && isAllowedCache(xobject))
         {
             cache.put(indirect, xobject);
         }
@@ -467,7 +467,7 @@ public final class PDResources implements COSObjectable
      */
     private COSObject getIndirect(COSName kind, COSName name)
     {
-        COSDictionary dict = (COSDictionary)resources.getDictionaryObject(kind);
+        COSDictionary dict = resources.getCOSDictionary(kind);
         if (dict == null)
         {
             return null;
@@ -486,7 +486,7 @@ public final class PDResources implements COSObjectable
      */
     private COSBase get(COSName kind, COSName name)
     {
-        COSDictionary dict = (COSDictionary)resources.getDictionaryObject(kind);
+        COSDictionary dict = resources.getCOSDictionary(kind);
         if (dict == null)
         {
             return null;
@@ -571,7 +571,7 @@ public final class PDResources implements COSObjectable
      */
     private Iterable<COSName> getNames(COSName kind)
     {
-        COSDictionary dict = (COSDictionary)resources.getDictionaryObject(kind);
+        COSDictionary dict = resources.getCOSDictionary(kind);
         if (dict == null)
         {
             return Collections.emptySet();
@@ -701,7 +701,7 @@ public final class PDResources implements COSObjectable
     private COSName add(COSName kind, String prefix, COSObjectable object)
     {
         // return the existing key if the item exists already
-        COSDictionary dict = (COSDictionary)resources.getDictionaryObject(kind);
+        COSDictionary dict = resources.getCOSDictionary(kind);
         if (dict != null && dict.containsValue(object.getCOSObject()))
         {
             return dict.getKeyForValue(object.getCOSObject());
@@ -732,7 +732,7 @@ public final class PDResources implements COSObjectable
      */
     private COSName createKey(COSName kind, String prefix)
     {
-        COSDictionary dict = (COSDictionary)resources.getDictionaryObject(kind);
+        COSDictionary dict = resources.getCOSDictionary(kind);
         if (dict == null)
         {
             return COSName.getPDFName(prefix + 1);
@@ -755,7 +755,7 @@ public final class PDResources implements COSObjectable
      */
     private void put(COSName kind, COSName name, COSObjectable object)
     {
-        COSDictionary dict = (COSDictionary)resources.getDictionaryObject(kind);
+        COSDictionary dict = resources.getCOSDictionary(kind);
         if (dict == null)
         {
             dict = new COSDictionary();

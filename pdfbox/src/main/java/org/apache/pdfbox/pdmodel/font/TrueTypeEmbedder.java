@@ -151,13 +151,14 @@ abstract class TrueTypeEmbedder implements Subsetter
     /**
      * Returns true if the fsType in the OS/2 table permits embedding.
      */
-    private boolean isEmbeddingPermitted(TrueTypeFont ttf) throws IOException
+    boolean isEmbeddingPermitted(TrueTypeFont ttf) throws IOException
     {
         if (ttf.getOS2Windows() != null)
         {
             int fsType = ttf.getOS2Windows().getFsType();
-            if ((fsType & OS2WindowsMetricsTable.FSTYPE_RESTRICTED) ==
-                             OS2WindowsMetricsTable.FSTYPE_RESTRICTED)
+            int maskedFsType = fsType & 0x000F;
+            // PDFBOX-5191: don't check the bit because permissions are exclusive
+            if (maskedFsType == OS2WindowsMetricsTable.FSTYPE_RESTRICTED)
             {
                 // restricted License embedding
                 return false;
@@ -194,23 +195,25 @@ abstract class TrueTypeEmbedder implements Subsetter
      */
     private PDFontDescriptor createFontDescriptor(TrueTypeFont ttf) throws IOException
     {
-        PDFontDescriptor fd = new PDFontDescriptor();
-        fd.setFontName(ttf.getName());
-
+        String ttfName = ttf.getName();
         OS2WindowsMetricsTable os2 = ttf.getOS2Windows();
         if (os2 == null)
         {
-            throw new IOException("os2 table is missing in font " + ttf.getName());
+            throw new IOException("os2 table is missing in font " + ttfName);
         }
         PostScriptTable post = ttf.getPostScript();
         if (post == null)
         {
-            throw new IOException("post table is missing in font " + ttf.getName());            
+            throw new IOException("post table is missing in font " + ttfName);            
         }
 
+        PDFontDescriptor fd = new PDFontDescriptor();
+        fd.setFontName(ttfName);
+
+        HorizontalHeaderTable hhea = ttf.getHorizontalHeader();
+
         // Flags
-        fd.setFixedPitch(post.getIsFixedPitch() > 0 ||
-                         ttf.getHorizontalHeader().getNumberOfHMetrics() == 1);
+        fd.setFixedPitch(post.getIsFixedPitch() > 0 || hhea.getNumberOfHMetrics() == 1);
 
         int fsSelection = os2.getFsSelection();
         fd.setItalic(((fsSelection & (ITALIC | OBLIQUE)) != 0));
@@ -250,9 +253,8 @@ abstract class TrueTypeEmbedder implements Subsetter
         fd.setFontBoundingBox(rect);
 
         // Ascent, Descent
-        HorizontalHeaderTable hHeader = ttf.getHorizontalHeader();
-        fd.setAscent(hHeader.getAscender() * scaling);
-        fd.setDescent(hHeader.getDescender() * scaling);
+        fd.setAscent(hhea.getAscender() * scaling);
+        fd.setDescent(hhea.getDescender() * scaling);
 
         // CapHeight, XHeight
         if (os2.getVersion() >= 1.2)

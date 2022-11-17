@@ -155,7 +155,7 @@ public class PDFunctionType0 extends PDFunction
                 for (int i = 0; i < sizeValuesSize; i++)
                 {
                     encode.add(COSInteger.ZERO);
-                    encode.add(COSInteger.get(sizeValues.getInt(i) - 1));
+                    encode.add(COSInteger.get(sizeValues.getInt(i) - 1L));
                 }
             }
         }
@@ -456,6 +456,10 @@ public class PDFunctionType0 extends PDFunction
         {
             PDRange range = getRangeForOutput(i);
             PDRange decodeValues = getDecodeForParameter(i);
+            if (decodeValues == null)
+            {
+                throw new IOException("Range missing in function /Decode entry");
+            }
             outputValues[i] = interpolate(outputValues[i], 0, maxSample, decodeValues.getMin(), decodeValues.getMax());
             outputValues[i] = clipToRange(outputValues[i], range.getMin(), range.getMax());
         }

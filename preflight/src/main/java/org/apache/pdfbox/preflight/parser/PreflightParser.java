@@ -410,6 +410,8 @@ public class PreflightParser extends PDFParser
         // signal start of new XRef
         xrefTrailerResolver.nextXrefObj(startByteOffset,XRefType.TABLE);
 
+        Pattern pattern = Pattern.compile("(\\d+)\\s(\\d+)(\\s*)");
+
         // Xref tables can have multiple sections. Each starts with a starting object id and a count.
         while (true)
         {
@@ -421,7 +423,6 @@ public class PreflightParser extends PDFParser
 
             long offset = source.getPosition();
             String line = readLine();
-            Pattern pattern = Pattern.compile("(\\d+)\\s(\\d+)(\\s*)");
             Matcher matcher = pattern.matcher(line);
             if (matcher.matches())
             {
@@ -724,7 +725,7 @@ public class PreflightParser extends PDFParser
             // ---- read offset or object stream object number from xref table
             Long offsetOrObjstmObNr = xrefTrailerResolver.getXrefTable().get(objKey);
 
-            // sanity test to circumvent loops with broken documents
+            // test to circumvent loops with broken documents
             if (requireExistingNotCompressedObj && ((offsetOrObjstmObNr == null)))
             {
                 addValidationError(new ValidationError(ERROR_SYNTAX_MISSING_OFFSET,

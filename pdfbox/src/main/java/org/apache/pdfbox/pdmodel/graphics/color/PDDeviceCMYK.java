@@ -47,7 +47,8 @@ public class PDDeviceCMYK extends PDDeviceColorSpace
     }
 
     private final PDColor initialColor = new PDColor(new float[] { 0, 0, 0, 1 }, this);
-    private volatile ICC_ColorSpace awtColorSpace;
+    private ICC_ColorSpace awtColorSpace;
+    private volatile boolean initDone = false;
     private boolean usePureJavaCMYKConversion = false;
 
     protected PDDeviceCMYK()
@@ -60,14 +61,14 @@ public class PDDeviceCMYK extends PDDeviceColorSpace
     protected void init() throws IOException
     {
         // no need to synchronize this check as it is atomic
-        if (awtColorSpace != null)
+        if (initDone)
         {
             return;
         }
         synchronized (this)
         {
             // we might have been waiting for another thread, so check again
-            if (awtColorSpace != null)
+            if (initDone)
             {
                 return;
             }
@@ -85,6 +86,9 @@ public class PDDeviceCMYK extends PDDeviceColorSpace
             awtColorSpace.toRGB(new float[] { 0, 0, 0, 0 });
             usePureJavaCMYKConversion = System
                     .getProperty("org.apache.pdfbox.rendering.UsePureJavaCMYKConversion") != null;
+
+            // Assignment to volatile must be the LAST statement in this block!
+            initDone = true;
         }
     }
 
@@ -136,6 +140,14 @@ public class PDDeviceCMYK extends PDDeviceColorSpace
     }
 
     @Override
+    public BufferedImage toRawImage(WritableRaster raster) throws IOException
+    {
+        // Device CMYK is not specified, as its the colors of whatever device you use.
+        // The user should fallback to the RGB image
+        return null;
+    }
+
+    @Override
     public BufferedImage toRGBImage(WritableRaster raster) throws IOException
     {
         init();
@@ -154,23 +166,30 @@ public class PDDeviceCMYK extends PDDeviceColorSpace
             float[] srcValues = new float[4];
             float[] lastValues = new float[] { -1.0f, -1.0f, -1.0f, -1.0f };
             float[] destValues = new float[3];
-            int width = raster.getWidth();
             int startX = raster.getMinX();
-            int height = raster.getHeight();
             int startY = raster.getMinY();
-            for (int x = startX; x < width + startX; x++)
+            int endX = raster.getWidth() + startX;
+            int endY = raster.getHeight() + startY;
+            for (int x = startX; x < endX; x++)
             {
-                for (int y = startY; y < height + startY; y++)
+                for (int y = startY; y < endY; y++)
                 {
                     raster.getPixel(x, y, srcValues);
                     // check if the last value can be reused
                     if (!Arrays.equals(lastValues, srcValues))
                     {
-                        for (int k = 0; k < 4; k++)
-                        {
-                            lastValues[k] = srcValues[k];
-                            srcValues[k] = srcValues[k] / 255f;
-                        }
+                        lastValues[0] = srcValues[0];
+                        srcValues[0] = srcValues[0] / 255f;
+
+                        lastValues[1] = srcValues[1];
+                        srcValues[1] = srcValues[1] / 255f;
+
+                        lastValues[2] = srcValues[2];
+                        srcValues[2] = srcValues[2] / 255f;
+
+                        lastValues[3] = srcValues[3];
+                        srcValues[3] = srcValues[3] / 255f;
+
                         // use CIEXYZ as intermediate format to optimize the color conversion
                         destValues = destCS.fromCIEXYZ(colorSpace.toCIEXYZ(srcValues));
                         for (int k = 0; k < destValues.length; k++)

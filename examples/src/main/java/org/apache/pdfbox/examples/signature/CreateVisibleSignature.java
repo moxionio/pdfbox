@@ -80,7 +80,7 @@ public class CreateVisibleSignature extends CreateSignatureBase
      * @param y position of the signature field
      * @param zoomPercent increase (positive value) or decrease (negative value) image with x percent.
      * @param imageStream input stream of an image.
-     * @param page the signature should be placed on
+     * @param page the signature should be placed on (1-based)
      * @throws IOException
      */
     public void setVisibleSignDesigner(String filename, int x, int y, int zoomPercent, 
@@ -112,7 +112,7 @@ public class CreateVisibleSignature extends CreateSignatureBase
      * @param location
      * @param reason
      * @param preferredSize
-     * @param page
+     * @param page the signature should be placed on (1-based)
      * @param visualSignEnabled
      */
     public void setVisibleSignatureProperties(String name, String location, String reason, int preferredSize, 
@@ -193,6 +193,10 @@ public class CreateVisibleSignature extends CreateSignatureBase
         // load document
         PDDocument doc = PDDocument.load(inputFile);
 
+        // call SigUtils.checkCrossReferenceTable(doc) if Adobe complains
+        // and read https://stackoverflow.com/a/71293901/535646
+        // and https://issues.apache.org/jira/browse/PDFBOX-5382
+
         int accessPermissions = SigUtils.getMDPPermission(doc);
         if (accessPermissions == 1)
         {
@@ -222,7 +226,7 @@ public class CreateVisibleSignature extends CreateSignatureBase
             SigUtils.setMDPPermission(doc, signature, 2);
         }
 
-        PDAcroForm acroForm = doc.getDocumentCatalog().getAcroForm();
+        PDAcroForm acroForm = doc.getDocumentCatalog().getAcroForm(null);
         if (acroForm != null && acroForm.getNeedAppearances())
         {
             // PDFBOX-3738 NeedAppearances true results in visible signature becoming invisible 
@@ -248,15 +252,12 @@ public class CreateVisibleSignature extends CreateSignatureBase
         // subfilter for basic and PAdES Part 2 signatures
         signature.setSubFilter(PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED);
         
-        if (visibleSignatureProperties != null)
-        {
-            // this builds the signature structures in a separate document
-            visibleSignatureProperties.buildSignature();
+        // this builds the signature structures in a separate document
+        visibleSignatureProperties.buildSignature();
 
-            signature.setName(visibleSignatureProperties.getSignerName());
-            signature.setLocation(visibleSignatureProperties.getSignerLocation());
-            signature.setReason(visibleSignatureProperties.getSignatureReason());
-        }
+        signature.setName(visibleSignatureProperties.getSignerName());
+        signature.setLocation(visibleSignatureProperties.getSignerLocation());
+        signature.setReason(visibleSignatureProperties.getSignatureReason());
 
         // the signing date, needed for valid signature
         signature.setSignDate(Calendar.getInstance());
@@ -265,7 +266,7 @@ public class CreateVisibleSignature extends CreateSignatureBase
         SignatureInterface signatureInterface = isExternalSigning() ? null : this;
 
         // register signature dictionary and sign interface
-        if (visibleSignatureProperties != null && visibleSignatureProperties.isVisualSignEnabled())
+        if (visibleSignatureProperties.isVisualSignEnabled())
         {
             signatureOptions = new SignatureOptions();
             signatureOptions.setVisualSignature(visibleSignatureProperties.getVisibleSignature());
@@ -332,7 +333,7 @@ public class CreateVisibleSignature extends CreateSignatureBase
     {
         PDSignature signature = null;
         PDSignatureField signatureField;
-        PDAcroForm acroForm = doc.getDocumentCatalog().getAcroForm();
+        PDAcroForm acroForm = doc.getDocumentCatalog().getAcroForm(null);
         if (acroForm != null)
         {
             signatureField = (PDSignatureField) acroForm.getField(sigFieldName);
@@ -407,7 +408,9 @@ public class CreateVisibleSignature extends CreateSignatureBase
         File ksFile = new File(args[0]);
         KeyStore keystore = KeyStore.getInstance("PKCS12");
         char[] pin = args[1].toCharArray();
-        keystore.load(new FileInputStream(ksFile), pin);
+        InputStream is = new FileInputStream(ksFile);
+        keystore.load(is, pin);
+        is.close();
 
         File documentFile = new File(args[2]);
 

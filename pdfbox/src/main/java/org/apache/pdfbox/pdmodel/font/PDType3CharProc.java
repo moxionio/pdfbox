@@ -21,11 +21,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.contentstream.PDContentStream;
 import org.apache.pdfbox.contentstream.operator.Operator;
 import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSNumber;
-import org.apache.pdfbox.cos.COSObject;
 import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.pdmodel.PDResources;
@@ -41,6 +44,8 @@ import org.apache.pdfbox.util.Matrix;
  */
 public final class PDType3CharProc implements COSObjectable, PDContentStream
 {
+    private static final Log LOG = LogFactory.getLog(PDType3CharProc.class);
+
     private final PDType3Font font;
     private final COSStream charStream;
 
@@ -75,6 +80,13 @@ public final class PDType3CharProc implements COSObjectable, PDContentStream
     @Override
     public PDResources getResources()
     {
+        if (charStream.containsKey(COSName.RESOURCES))
+        {
+            // PDFBOX-5294
+            LOG.warn("Using resources dictionary found in charproc entry");
+            LOG.warn("This should have been in the font or in the page dictionary");
+            return new PDResources((COSDictionary) charStream.getDictionaryObject(COSName.RESOURCES));
+        }
         return font.getResources();
     }
 
@@ -98,11 +110,7 @@ public final class PDType3CharProc implements COSObjectable, PDContentStream
         Object token = parser.parseNextToken();
         while (token != null)
         {
-            if (token instanceof COSObject)
-            {
-                arguments.add(((COSObject) token).getObject());
-            }
-            else if (token instanceof Operator)
+            if (token instanceof Operator)
             {
                 if (((Operator) token).getName().equals("d1") && arguments.size() == 6)
                 {
@@ -113,11 +121,13 @@ public final class PDType3CharProc implements COSObjectable, PDContentStream
                             return null;
                         }
                     }
+                    float x = ((COSNumber) arguments.get(2)).floatValue();
+                    float y = ((COSNumber) arguments.get(3)).floatValue();
                     return new PDRectangle(
-                            ((COSNumber) arguments.get(2)).floatValue(),
-                            ((COSNumber) arguments.get(3)).floatValue(),
-                            ((COSNumber) arguments.get(4)).floatValue() - ((COSNumber) arguments.get(2)).floatValue(),
-                            ((COSNumber) arguments.get(5)).floatValue() - ((COSNumber) arguments.get(3)).floatValue());
+                            x,
+                            y,
+                            ((COSNumber) arguments.get(4)).floatValue() - x,
+                            ((COSNumber) arguments.get(5)).floatValue() - y);
                 }
                 else
                 {
@@ -153,11 +163,7 @@ public final class PDType3CharProc implements COSObjectable, PDContentStream
         Object token = parser.parseNextToken();
         while (token != null)
         {
-            if (token instanceof COSObject)
-            {
-                arguments.add(((COSObject) token).getObject());
-            }
-            else if (token instanceof Operator)
+            if (token instanceof Operator)
             {
                 return parseWidth((Operator) token, arguments);
             }

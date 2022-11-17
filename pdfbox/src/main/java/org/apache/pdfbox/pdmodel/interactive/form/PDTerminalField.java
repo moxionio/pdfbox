@@ -101,19 +101,18 @@ public abstract class PDTerminalField extends PDField
     {
         super.importFDF(fdfField);
         
-        PDAnnotationWidget widget = getWidgets().get(0); // fixme: ignores multiple widgets
-        if (widget != null)
+        Integer f = fdfField.getWidgetFieldFlags();
+        for (PDAnnotationWidget widget : getWidgets())
         {
-            int annotFlags = widget.getAnnotationFlags();
-            Integer f = fdfField.getWidgetFieldFlags();
             if (f != null)
             {
                 widget.setAnnotationFlags(f);
             }
             else
             {
-                // these are suppose to be ignored if the F is set.
+                // these are supposed to be ignored if the F is set.
                 Integer setF = fdfField.getSetWidgetFieldFlags();
+                int annotFlags = widget.getAnnotationFlags();
                 if (setF != null)
                 {
                     annotFlags = annotFlags | setF;

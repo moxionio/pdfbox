@@ -20,7 +20,11 @@ import java.awt.Graphics2D;
 import java.awt.Paint;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.geom.AffineTransform;
+import java.awt.image.AffineTransformOp;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBuffer;
+import java.awt.image.ImagingOpException;
 import java.awt.image.WritableRaster;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
@@ -31,7 +35,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.SoftReference;
 import java.util.List;
+
 import javax.imageio.ImageIO;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.cos.COSArray;
@@ -226,7 +232,7 @@ public final class PDImageXObject extends PDXObject implements PDImage
     public static PDImageXObject createFromFileByExtension(File file, PDDocument doc) throws IOException
     {
         String name = file.getName();
-        int dot = file.getName().lastIndexOf('.');
+        int dot = name.lastIndexOf('.');
         if (dot == -1)
         {
             throw new IllegalArgumentException("Image type not supported: " + name);
@@ -247,7 +253,18 @@ public final class PDImageXObject extends PDXObject implements PDImage
         }
         if ("tif".equals(ext) || "tiff".equals(ext))
         {
-            return CCITTFactory.createFromFile(doc, file);
+            try
+            {
+                return CCITTFactory.createFromFile(doc, file);
+            }
+            catch (IOException ex)
+            {
+                LOG.debug("Reading as TIFF failed, setting fileType to PNG", ex);
+                // Plan B: try reading with ImageIO
+                // common exception:
+                // First image in tiff is not CCITT T4 or T6 compressed
+                ext = "png";
+            }
         }
         if ("gif".equals(ext) || "bmp".equals(ext) || "png".equals(ext))
         {
@@ -475,24 +492,25 @@ public final class PDImageXObject extends PDXObject implements PDImage
             }
         }
 
-        // get image as RGB
-        BufferedImage image = SampledImageReader.getRGBImage(this, region, subsampling, getColorKeyMask());
-
+        // get RGB image w/o reference because applyMask might modify it, take long time and a lot of memory. 
+        final BufferedImage image;
+        final PDImageXObject softMask = getSoftMask();
+        final PDImageXObject mask = getMask();
         // soft mask (overrides explicit mask)
-        PDImageXObject softMask = getSoftMask();
         if (softMask != null)
         {
-            float[] matte = extractMatte(softMask);
-            image = applyMask(image, softMask.getOpaqueImage(), true, matte);
+            image = applyMask(SampledImageReader.getRGBImage(this, region, subsampling, getColorKeyMask()),
+                    softMask.getOpaqueImage(), softMask.getInterpolate(), true, extractMatte(softMask));
+        }
+        // explicit mask - to be applied only if /ImageMask true
+        else if (mask != null && mask.isStencil())
+        {
+            image = applyMask(SampledImageReader.getRGBImage(this, region, subsampling, getColorKeyMask()),
+                    mask.getOpaqueImage(), mask.getInterpolate(), false, null);
         }
         else
         {
-            // explicit mask - to be applied only if /ImageMask true
-            PDImageXObject mask = getMask();
-            if (mask != null && mask.isStencil())
-            {
-                image = applyMask(image, mask.getOpaqueImage(), false, null);
-            }
+            image = SampledImageReader.getRGBImage(this, region, subsampling, getColorKeyMask());
         }
 
         if (region == null && subsampling <= cachedImageSubsampling)
@@ -504,6 +522,18 @@ public final class PDImageXObject extends PDXObject implements PDImage
         }
 
         return image;
+    }
+
+    @Override
+    public BufferedImage getRawImage() throws IOException
+    {
+        return getColorSpace().toRawImage(getRawRaster());
+    }
+
+    @Override
+    public WritableRaster getRawRaster() throws IOException
+    {
+        return SampledImageReader.getRawRaster(this);
     }
 
     /**
@@ -558,98 +588,169 @@ public final class PDImageXObject extends PDXObject implements PDImage
         return SampledImageReader.getRGBImage(this, null);
     }
 
-    // explicit mask: RGB + Binary -> ARGB
-    // soft mask: RGB + Gray -> ARGB
-    private BufferedImage applyMask(BufferedImage image, BufferedImage mask,
-                                    boolean isSoft, float[] matte)
+    /**
+     * @param image The image to apply the mask to as alpha channel.
+     * @param mask A mask image in 8 bit Gray. Even for a stencil mask image due to
+     * {@link #getOpaqueImage()} and {@link SampledImageReader}'s {@code from1Bit()} special
+     * handling of DeviceGray.
+     * @param interpolateMask interpolation flag of the mask image.
+     * @param isSoft {@code true} if a soft mask. If not stencil mask, then alpha will be inverted
+     * by this method.
+     * @param matte an optional RGB matte if a soft mask.
+     * @return an ARGB image (can be the altered original image)
+     */
+    private BufferedImage applyMask(BufferedImage image, BufferedImage mask, boolean interpolateMask,
+            boolean isSoft, float[] matte)
     {
         if (mask == null)
         {
             return image;
         }
 
-        int width = image.getWidth();
-        int height = image.getHeight();
+        final int width = Math.max(image.getWidth(), mask.getWidth());
+        final int height = Math.max(image.getHeight(), mask.getHeight());
 
-        // scale mask to fit image, or image to fit mask, whichever is larger
+        // scale mask to fit image, or image to fit mask, whichever is larger.
+        // also make sure that mask is 8 bit gray and image is ARGB as this
+        // is what needs to be returned.
         if (mask.getWidth() < width || mask.getHeight() < height)
         {
-            mask = scaleImage(mask, width, height);
+            mask = scaleImage(mask, width, height, BufferedImage.TYPE_BYTE_GRAY, interpolateMask);
         }
-        else if (mask.getWidth() > width || mask.getHeight() > height)
+        else if (mask.getType() != BufferedImage.TYPE_BYTE_GRAY)
         {
-            width = mask.getWidth();
-            height = mask.getHeight();
-            image = scaleImage(image, width, height);
-        }
-        else if (image.getRaster().getPixel(0, 0, (int[]) null).length < 3)
-        {
-            // PDFBOX-4470 bitonal image has only one element => copy into RGB
-            image = scaleImage(image, width, height);
+            mask = scaleImage(mask, width, height, BufferedImage.TYPE_BYTE_GRAY, false);
         }
 
-        // compose to ARGB
-        BufferedImage masked = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-        WritableRaster src = image.getRaster();
-        WritableRaster dest = masked.getRaster();
-        WritableRaster alpha = mask.getRaster();
-
-        float[] rgb = new float[4];
-        float[] rgba = new float[4];
-        float[] alphaPixel = null;
-        for (int y = 0; y < height; y++)
+        if (image.getWidth() < width || image.getHeight() < height)
         {
-            for (int x = 0; x < width; x++)
+            image = scaleImage(image, width, height, BufferedImage.TYPE_INT_ARGB, getInterpolate());
+        }
+        else if (image.getType() != BufferedImage.TYPE_INT_ARGB)
+        {
+            image = scaleImage(image, width, height, BufferedImage.TYPE_INT_ARGB, false);
+        }
+
+        // compose alpha into ARGB image, either:
+        // - very fast by direct bit combination if not a soft mask and a 8 bit alpha source. 
+        // - fast by letting the sample model do a bulk band operation if no matte is set.
+        // - slow and complex by matte calculations on individual pixel components.
+        final WritableRaster raster = image.getRaster();
+        final WritableRaster alpha = mask.getRaster();
+        if (!isSoft && raster.getDataBuffer().getSize() == alpha.getDataBuffer().getSize())
+        {
+            final DataBuffer dst = raster.getDataBuffer();
+            final DataBuffer src = alpha.getDataBuffer();
+            for (int i = 0, c = dst.getSize(); c > 0; i++, c--)
             {
-                src.getPixel(x, y, rgb);
-
-                rgba[0] = rgb[0];
-                rgba[1] = rgb[1];
-                rgba[2] = rgb[2];
-
-                alphaPixel = alpha.getPixel(x, y, alphaPixel);
-                if (isSoft)
+                dst.setElem(i, dst.getElem(i) & 0xffffff | ~src.getElem(i) << 24);
+            }
+        }
+        else if (matte == null)
+        {
+            final int[] samples = new int[width];
+            for (int y = 0; y < height; y++)
+            {
+                alpha.getSamples(0, y, width, 1, 0, samples);
+                if (!isSoft)
                 {
-                    rgba[3] = alphaPixel[0];
-                    if (matte != null && Float.compare(alphaPixel[0], 0) != 0)
+                    for (int x = 0; x < width; x++)
                     {
-                        rgba[0] = clampColor(((rgba[0] / 255 - matte[0]) / (alphaPixel[0] / 255) + matte[0]) * 255);
-                        rgba[1] = clampColor(((rgba[1] / 255 - matte[1]) / (alphaPixel[0] / 255) + matte[1]) * 255);
-                        rgba[2] = clampColor(((rgba[2] / 255 - matte[2]) / (alphaPixel[0] / 255) + matte[2]) * 255);
+                        samples[x] ^= -1;
                     }
                 }
-                else
+                raster.setSamples(0, y, width, 1, 3, samples);
+            }
+        }
+        else
+        {
+            final int[] alphas = new int[width];
+            final int[] pixels = new int[4 * width];
+            // Original code is to clamp component and alpha to [0f, 1f] as matte is,
+            // and later expand to [0; 255] again (with rounding).
+            // component = 255f * ((component / 255f - matte) / (alpha / 255f) + matte)
+            //           = (255 * component - 255 * 255f * matte) / alpha + 255f * matte
+            // There is a clearly visible factor 255 for most components in above formula,
+            // i.e. max value is 255 * 255: 16 bits + sign.
+            // Let's use faster fixed point integer arithmetics with Q16.15,
+            // introducing neglible errors (0.001%).
+            // Note: For "correct" rounding we increase the final matte value (m0h, m1h, m2h) by
+            // a half an integer.
+            final int fraction = 15;
+            final int factor = 255 << fraction;
+            final int m0 = Math.round(factor * matte[0]) * 255;
+            final int m1 = Math.round(factor * matte[1]) * 255;
+            final int m2 = Math.round(factor * matte[2]) * 255;
+            final int m0h = m0 / 255 + (1 << fraction - 1);
+            final int m1h = m1 / 255 + (1 << fraction - 1);
+            final int m2h = m2 / 255 + (1 << fraction - 1);
+            for (int y = 0; y < height; y++)
+            {
+                raster.getPixels(0, y, width, 1, pixels);
+                alpha.getSamples(0, y, width, 1, 0, alphas);
+                int offset = 0;
+                for (int x = 0; x < width; x++)
                 {
-                    rgba[3] = 255 - alphaPixel[0];
+                    int a = alphas[x];
+                    if (a == 0)
+                    {
+                        offset += 3;
+                    }
+                    else
+                    {
+                        pixels[offset] = clampColor(((pixels[offset++] * factor - m0) / a + m0h) >> fraction);
+                        pixels[offset] = clampColor(((pixels[offset++] * factor - m1) / a + m1h) >> fraction);
+                        pixels[offset] = clampColor(((pixels[offset++] * factor - m2) / a + m2h) >> fraction);
+                    }
+                    pixels[offset++] = a;
                 }
-
-                dest.setPixel(x, y, rgba);
+                raster.setPixels(0, y, width, 1, pixels);
             }
         }
 
-        return masked;
+        return image;
     }
 
-    private float clampColor(float color)
+    private static int clampColor(int color)
     {
-        return color < 0 ? 0 : (color > 255 ? 255 : color);        
+        return color < 0 ? 0 : color > 255 ? 255 : color;
     }
 
     /**
      * High-quality image scaling.
      */
-    private BufferedImage scaleImage(BufferedImage image, int width, int height)
+    private static BufferedImage scaleImage(BufferedImage image, int width, int height, int type, boolean interpolate)
     {
-        BufferedImage image2 = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        final int imgWidth = image.getWidth();
+        final int imgHeight = image.getHeight();
+        // largeScale switch is arbitrarily chosen as to where bicubic becomes very slow
+        boolean largeScale = width * height > 3000 * 3000 * (type == BufferedImage.TYPE_BYTE_GRAY ? 3 : 1);
+        interpolate &= imgWidth != width || imgHeight != height;
+
+        BufferedImage image2 = new BufferedImage(width, height, type);
+        if (interpolate)
+        {
+            AffineTransform af = AffineTransform.getScaleInstance((double) width / imgWidth, (double) height / imgHeight);
+            AffineTransformOp afo = new AffineTransformOp(af, largeScale ? AffineTransformOp.TYPE_BILINEAR : AffineTransformOp.TYPE_BICUBIC);
+            try
+            {
+                afo.filter(image, image2);
+                return image2;
+            }
+            catch (ImagingOpException e)
+            {
+                LOG.warn(e.getMessage(), e);
+            }
+        }
         Graphics2D g = image2.createGraphics();
-        if (getInterpolate())
+        if (interpolate)
         {
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-                    RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                    largeScale ? RenderingHints.VALUE_INTERPOLATION_BILINEAR : RenderingHints.VALUE_INTERPOLATION_BICUBIC);
             g.setRenderingHint(RenderingHints.KEY_RENDERING,
-                    RenderingHints.VALUE_RENDER_QUALITY);
+                    largeScale ? RenderingHints.VALUE_RENDER_DEFAULT : RenderingHints.VALUE_RENDER_QUALITY);
         }
-        g.drawImage(image, 0, 0, width, height, 0, 0, image.getWidth(), image.getHeight(), null);
+        g.drawImage(image, 0, 0, width, height, 0, 0, imgWidth, imgHeight, null);
         g.dispose();
         return image2;
     }

@@ -26,10 +26,6 @@ import org.apache.pdfbox.cos.COSName;
  */
 public class WinAnsiEncoding extends Encoding
 {
-
-    private static final int CHAR_CODE = 0;
-    private static final int CHAR_NAME = 1;
-    
     /**
      * Table of octal character codes and their corresponding names.
      */
@@ -252,7 +248,7 @@ public class WinAnsiEncoding extends Encoding
             {060, "zero"},
             // adding some additional mappings as defined in Appendix D of the pdf spec
             {0240, "nbspace"},
-            {0255, "hyphen"}
+            {0255, "sfthyphen"}
     };
 
     /**

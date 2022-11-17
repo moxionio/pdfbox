@@ -53,29 +53,25 @@ public class PDHighlightAppearanceHandler extends PDAbstractAppearanceHandler
     }
 
     @Override
-    public void generateAppearanceStreams()
-    {
-        generateNormalAppearance();
-        generateRolloverAppearance();
-        generateDownAppearance();
-    }
-
-    @Override
     public void generateNormalAppearance()
     {
         PDAnnotationTextMarkup annotation = (PDAnnotationTextMarkup) getAnnotation();
-        PDRectangle rect = annotation.getRectangle();
         float[] pathsArray = annotation.getQuadPoints();
         if (pathsArray == null)
         {
             return;
         }
-        AnnotationBorder ab = AnnotationBorder.getAnnotationBorder(annotation, annotation.getBorderStyle());
         PDColor color = annotation.getColor();
         if (color == null || color.getComponents().length == 0)
         {
             return;
         }
+        PDRectangle rect = annotation.getRectangle();
+        if (rect == null)
+        {
+            return;
+        }
+        AnnotationBorder ab = AnnotationBorder.getAnnotationBorder(annotation, annotation.getBorderStyle());
 
         // Adjust rectangle even if not empty, see PLPDF.com-MarkupAnnotations.pdf
         //TODO in a class structure this should be overridable

@@ -109,8 +109,8 @@ public abstract class Filter
     // normalise the DecodeParams entry so that it is always a dictionary
     protected COSDictionary getDecodeParams(COSDictionary dictionary, int index)
     {
-        COSBase filter = dictionary.getDictionaryObject(COSName.FILTER, COSName.F);
-        COSBase obj = dictionary.getDictionaryObject(COSName.DECODE_PARMS, COSName.DP);
+        COSBase filter = dictionary.getDictionaryObject(COSName.F, COSName.FILTER);
+        COSBase obj = dictionary.getDictionaryObject(COSName.DP, COSName.DECODE_PARMS);
         if (filter instanceof COSName && obj instanceof COSDictionary)
         {
             // PDFBOX-3932: The PDF specification requires "If there is only one filter and that 
@@ -126,7 +126,7 @@ public abstract class Filter
                 COSBase objAtIndex = array.getObject(index);
                 if (objAtIndex instanceof COSDictionary)
                 {
-                    return (COSDictionary)array.getObject(index);
+                    return (COSDictionary) objAtIndex;
                 }
             }
         }
@@ -149,20 +149,16 @@ public abstract class Filter
     protected static ImageReader findImageReader(String formatName, String errorCause) throws MissingImageReaderException
     {
         Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName(formatName);
-        ImageReader reader = null;
+        ImageReader reader;
         while (readers.hasNext())
         {
             reader = readers.next();
             if (reader != null && reader.canReadRaster())
             {
-                break;
+                return reader;
             }
         }
-        if (reader == null)
-        {
-            throw new MissingImageReaderException("Cannot read " + formatName + " image: " + errorCause);
-        }
-        return reader;
+        throw new MissingImageReaderException("Cannot read " + formatName + " image: " + errorCause);
     }
 
     /**

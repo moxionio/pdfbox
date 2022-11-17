@@ -24,6 +24,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -38,6 +39,7 @@ import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageTree;
 import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
@@ -96,8 +98,9 @@ public class Overlay implements Closeable
     /**
      * This will add overlays to a document.
      *
-     * @param specificPageOverlayFile Optional map of overlay files for specific pages. The page
-     * numbers are 1-based. The map must be empty (but not null) if no specific mappings are used.
+     * @param specificPageOverlayFile Optional map of overlay files of which the first page will be
+     * used for specific pages of the input document. The page numbers are 1-based. The map must be
+     * empty (but not null) if no specific mappings are used.
      *
      * @return The modified input PDF document, which has to be saved and closed by the caller. If
      * the input document was passed by {@link #setInputPDF(PDDocument) setInputPDF(PDDocument)}
@@ -107,20 +110,20 @@ public class Overlay implements Closeable
      */
     public PDDocument overlay(Map<Integer, String> specificPageOverlayFile) throws IOException
     {
-        Map<String, PDDocument> loadedDocuments = new HashMap<String, PDDocument>();
-        Map<PDDocument, LayoutPage> layouts = new HashMap<PDDocument, LayoutPage>();
+        Map<String, LayoutPage> layouts = new HashMap<String, LayoutPage>();
+        String path;
         loadPDFs();
         for (Map.Entry<Integer, String> e : specificPageOverlayFile.entrySet())
         {
-            PDDocument doc = loadedDocuments.get(e.getValue());
-            if (doc == null)
+            path = e.getValue();
+            LayoutPage layoutPage = layouts.get(path);
+            if (layoutPage == null)
             {
-                doc = loadPDF(e.getValue());
-                loadedDocuments.put(e.getValue(), doc);
-                layouts.put(doc, getLayoutPage(doc));
+                PDDocument doc = loadPDF(path);
+                layouts.put(path, getLayoutPage(doc));
+                openDocuments.add(doc);
             }
-            openDocuments.add(doc);
-            specificPageOverlayPage.put(e.getKey(), layouts.get(doc));
+            specificPageOverlayPage.put(e.getKey(), layoutPage);
         }
         processPages(inputPDFDocument);
         return inputPDFDocument;
@@ -273,9 +276,9 @@ public class Overlay implements Closeable
         private final PDRectangle overlayMediaBox;
         private final COSStream overlayContentStream;
         private final COSDictionary overlayResources;
-        private final int overlayRotation;
+        private final short overlayRotation;
 
-        private LayoutPage(PDRectangle mediaBox, COSStream contentStream, COSDictionary resources, int rotation)
+        private LayoutPage(PDRectangle mediaBox, COSStream contentStream, COSDictionary resources, short rotation)
         {
             overlayMediaBox = mediaBox;
             overlayContentStream = contentStream;
@@ -284,9 +287,26 @@ public class Overlay implements Closeable
         }
     }
 
+    /**
+     * Create a LayoutPage object from the first page of the given document.
+     *
+     * @param doc
+     * @return
+     * @throws IOException 
+     */
     private LayoutPage getLayoutPage(PDDocument doc) throws IOException
     {
-        PDPage page = doc.getPage(0);
+        return createLayoutPage(doc.getPage(0));
+    }
+
+    /**
+     * Create a LayoutPage object from given PDPage object.
+     *
+     * @return
+     * @throws IOException 
+     */
+    private LayoutPage createLayoutPage(PDPage page) throws IOException
+    {
         COSBase contents = page.getCOSObject().getDictionaryObject(COSName.CONTENTS);
         PDResources resources = page.getResources();
         if (resources == null)
@@ -294,24 +314,17 @@ public class Overlay implements Closeable
             resources = new PDResources();
         }
         return new LayoutPage(page.getMediaBox(), createCombinedContentStream(contents),
-                resources.getCOSObject(), page.getRotation());
+                resources.getCOSObject(), (short) page.getRotation());
     }
     
     private Map<Integer,LayoutPage> getLayoutPages(PDDocument doc) throws IOException
     {
-        int numberOfPages = doc.getNumberOfPages();
-        Map<Integer,LayoutPage> layoutPages = new HashMap<Integer, Overlay.LayoutPage>(numberOfPages);
-        for (int i=0;i<numberOfPages;i++)
+        int i = 0;
+        Map<Integer, LayoutPage> layoutPages = new HashMap<Integer, LayoutPage>();
+        for (PDPage page : doc.getPages())
         {
-            PDPage page = doc.getPage(i);
-            COSBase contents = page.getCOSObject().getDictionaryObject(COSName.CONTENTS);
-            PDResources resources = page.getResources();
-            if (resources == null)
-            {
-                resources = new PDResources();
-            }
-            layoutPages.put(i, new LayoutPage(page.getMediaBox(), createCombinedContentStream(contents), 
-                    resources.getCOSObject(), page.getRotation()));
+            layoutPages.put(i, createLayoutPage(page));
+            i++;
         }
         return layoutPages;
     }
@@ -336,16 +349,17 @@ public class Overlay implements Closeable
     // get the content streams as a list
     private List<COSStream> createContentStreamList(COSBase contents) throws IOException
     {
-        List<COSStream> contentStreams = new ArrayList<COSStream>();
         if (contents == null)
         {
-            return contentStreams;
+            return Collections.emptyList();
         }
-        else if (contents instanceof COSStream)
+        if (contents instanceof COSStream)
         {
-            contentStreams.add((COSStream) contents);
+            return Collections.singletonList((COSStream) contents);
         }
-        else if (contents instanceof COSArray)
+
+        List<COSStream> contentStreams = new ArrayList<COSStream>();
+        if (contents instanceof COSArray)
         {
             for (COSBase item : (COSArray) contents)
             {
@@ -366,17 +380,19 @@ public class Overlay implements Closeable
     private void processPages(PDDocument document) throws IOException
     {
         int pageCounter = 0;
-        for (PDPage page : document.getPages())
+        PDPageTree pageTree = document.getPages();
+        int numberOfPages = pageTree.getCount();
+        for (PDPage page : pageTree)
         {
             pageCounter++;
-            COSDictionary pageDictionary = page.getCOSObject();
-            COSBase originalContent = pageDictionary.getDictionaryObject(COSName.CONTENTS);
-            COSArray newContentArray = new COSArray();
-            LayoutPage layoutPage = getLayoutPage(pageCounter, document.getNumberOfPages());
+            LayoutPage layoutPage = getLayoutPage(pageCounter, numberOfPages);
             if (layoutPage == null)
             {
                 continue;
             }
+            COSDictionary pageDictionary = page.getCOSObject();
+            COSBase originalContent = pageDictionary.getDictionaryObject(COSName.CONTENTS);
+            COSArray newContentArray = new COSArray();
             switch (position)
             {
                 case FOREGROUND:

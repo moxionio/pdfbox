@@ -17,6 +17,7 @@
 package org.apache.pdfbox.pdmodel.graphics.color;
 
 import java.awt.Point;
+import java.awt.color.ColorSpace;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBuffer;
 import java.awt.image.Raster;
@@ -84,6 +85,14 @@ public class PDSeparation extends PDSpecialColorSpace
         array = separation;
         alternateColorSpace = PDColorSpace.create(array.getObject(ALTERNATE_CS));
         tintTransform = PDFunction.create(array.getObject(TINT_TRANSFORM));
+        int numberOfOutputParameters = tintTransform.getNumberOfOutputParameters();
+        if (numberOfOutputParameters > 0 &&
+                numberOfOutputParameters < alternateColorSpace.getNumberOfComponents())
+        {
+            throw new IOException("The tint transform function has less output parameters (" +
+                    tintTransform.getNumberOfOutputParameters() + ") than the alternate colorspace " +
+                    alternateColorSpace + " (" + alternateColorSpace.getNumberOfComponents() + ")");
+        }
     }
 
     @Override
@@ -220,6 +229,12 @@ public class PDSeparation extends PDSpecialColorSpace
             // scale to 0..255
             alt[s] = (int) (result[s] * 255);
         }
+    }
+
+    @Override
+    public BufferedImage toRawImage(WritableRaster raster)
+    {
+        return toRawImage(raster, ColorSpace.getInstance(ColorSpace.CS_GRAY));
     }
 
     /**

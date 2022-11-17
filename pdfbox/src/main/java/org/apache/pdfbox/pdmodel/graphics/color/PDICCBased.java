@@ -234,7 +234,7 @@ public final class PDICCBased extends PDCIEBasedColorSpace
 
                 // set initial colour
                 float[] initial = new float[getNumberOfComponents()];
-                for (int c = 0; c < getNumberOfComponents(); c++)
+                for (int c = 0; c < initial.length; c++)
                 {
                     initial[c] = Math.max(0, getRangeForComponent(c).getMin());
                 }
@@ -299,7 +299,8 @@ public final class PDICCBased extends PDCIEBasedColorSpace
     }
 
     /**
-     * Returns true if the given profile is represents sRGB.
+     * Returns true if the given profile represents sRGB.
+     * (unreliable on the data of ColorSpace.CS_sRGB in openjdk)
      */
     private boolean is_sRGB(ICC_Profile profile)
     {
@@ -377,6 +378,16 @@ public final class PDICCBased extends PDCIEBasedColorSpace
         {
             return alternateColorSpace.toRGBImage(raster);
         }
+    }
+
+    @Override
+    public BufferedImage toRawImage(WritableRaster raster) throws IOException
+    {
+        if(awtColorSpace == null)
+        {
+            return alternateColorSpace.toRawImage(raster);
+        }
+        return toRawImage(raster, awtColorSpace);
     }
 
     @Override
@@ -592,6 +603,15 @@ public final class PDICCBased extends PDCIEBasedColorSpace
     public void setMetadata(COSStream metadata)
     {
         stream.getCOSObject().setItem(COSName.METADATA, metadata);
+    }
+
+    /**
+     * Internal accessor to support indexed raw images.
+     * @return true if this colorspace is sRGB.
+     */
+    boolean isSRGB()
+    {
+        return isRGB;
     }
 
     @Override

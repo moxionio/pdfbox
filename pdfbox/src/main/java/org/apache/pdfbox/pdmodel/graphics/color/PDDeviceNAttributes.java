@@ -76,10 +76,13 @@ public final class PDDeviceNAttributes
             colorants = new COSDictionary();
             dictionary.setItem(COSName.COLORANTS, colorants);
         }
-        for(COSName name : colorants.keySet())
+        else
         {
-            COSBase value = colorants.getDictionaryObject(name);
-            actuals.put(name.getName(), (PDSeparation)PDColorSpace.create(value));
+            for (COSName name : colorants.keySet())
+            {
+                COSBase value = colorants.getDictionaryObject(name);
+                actuals.put(name.getName(), (PDSeparation) PDColorSpace.create(value));
+            }
         }
         return new COSDictionaryMap<String, PDSeparation>(actuals, colorants);
     }
@@ -129,7 +132,7 @@ public final class PDDeviceNAttributes
         PDDeviceNProcess process = getProcess();
         if (process != null)
         {
-            sb.append(getProcess());
+            sb.append(process);
             sb.append(' ');
         }
 

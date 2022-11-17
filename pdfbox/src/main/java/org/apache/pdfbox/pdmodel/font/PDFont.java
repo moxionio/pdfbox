@@ -117,7 +117,7 @@ public abstract class PDFont implements COSObjectable, PDFontLike
 
     private PDFontDescriptor loadFontDescriptor()
     {
-        COSDictionary fd = (COSDictionary) dict.getDictionaryObject(COSName.FONT_DESC);
+        COSDictionary fd = dict.getCOSDictionary(COSName.FONT_DESC);
         if (fd != null)
         {
             return new PDFontDescriptor(fd);
@@ -158,6 +158,7 @@ public abstract class PDFont implements COSObjectable, PDFontLike
                 {
                     // assume that if encoding is identity, then the reverse is also true
                     cmap = CMapManager.getPredefinedCMap(COSName.IDENTITY_H.getName());
+                    LOG.warn("Using predefined identity CMap instead");
                 }
             }
         }
@@ -396,11 +397,16 @@ public abstract class PDFont implements COSObjectable, PDFontLike
             {
                 for (int i = 0; i < widths.size(); i++)
                 {
-                    COSNumber fontWidth = (COSNumber) widths.getObject(i);
-                    if (fontWidth.floatValue() > 0)
+                    COSBase base = widths.getObject(i);
+                    if (base instanceof COSNumber)
                     {
-                        totalWidth += fontWidth.floatValue();
-                        characterCount += 1;
+                        COSNumber fontWidth = (COSNumber) base;
+                        float floatValue = fontWidth.floatValue();
+                        if (floatValue > 0)
+                        {
+                            totalWidth += floatValue;
+                            characterCount += 1;
+                        }
                     }
                 }
             }
@@ -529,10 +535,9 @@ public abstract class PDFont implements COSObjectable, PDFontLike
     {
         if (fontWidthOfSpace == -1f)
         {
-            COSBase toUnicode = dict.getDictionaryObject(COSName.TO_UNICODE);
             try
             {
-                if (toUnicode != null && toUnicodeCMap != null)
+                if (toUnicodeCMap != null && dict.containsKey(COSName.TO_UNICODE))
                 {
                     int spaceMapping = toUnicodeCMap.getSpaceMapping();
                     if (spaceMapping > -1)
@@ -549,11 +554,12 @@ public abstract class PDFont implements COSObjectable, PDFontLike
                 if (fontWidthOfSpace <= 0)
                 {
                     fontWidthOfSpace = getWidthFromFont(32);
-                }
-                // use the average font width as fall back
-                if (fontWidthOfSpace <= 0)
-                {
-                    fontWidthOfSpace = getAverageFontWidth();
+
+                    // use the average font width as fall back
+                    if (fontWidthOfSpace <= 0)
+                    {
+                        fontWidthOfSpace = getAverageFontWidth();
+                    }
                 }
             }
             catch (Exception e)
@@ -622,5 +628,15 @@ public abstract class PDFont implements COSObjectable, PDFontLike
     public String toString()
     {
         return getClass().getSimpleName() + " " + getName();
+    }
+
+    /**
+     * Get the /ToUnicode CMap.
+     *
+     * @return The /ToUnicode CMap or null if there is none.
+     */
+    protected CMap getToUnicodeCMap()
+    {
+        return toUnicodeCMap;
     }
 }

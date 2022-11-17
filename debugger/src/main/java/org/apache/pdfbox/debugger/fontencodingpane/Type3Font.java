@@ -29,7 +29,6 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
-import org.apache.pdfbox.pdmodel.font.PDSimpleFont;
 import org.apache.pdfbox.pdmodel.font.PDType3CharProc;
 import org.apache.pdfbox.pdmodel.font.PDType3Font;
 import org.apache.pdfbox.rendering.PDFRenderer;
@@ -193,9 +192,9 @@ class Type3Font extends FontPane
         }
     }
 
-    private String getEncodingName(PDSimpleFont font)
+    private String getEncodingName(PDType3Font font)
     {
-        return font.getEncoding().getClass().getSimpleName();
+        return font.getEncoding().getClass().getSimpleName() + " / " +  font.getEncoding().getEncodingName();
     }
 
     @Override

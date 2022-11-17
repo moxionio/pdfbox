@@ -20,7 +20,6 @@ package org.apache.pdfbox.examples.signature.validation;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.security.GeneralSecurityException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
@@ -32,6 +31,7 @@ import java.util.Set;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.pdfbox.examples.signature.SigUtils;
 import org.apache.pdfbox.examples.signature.cert.CertificateVerifier;
 import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.encryption.SecurityProvider;
@@ -47,7 +47,6 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cms.CMSException;
 import org.bouncycastle.cms.CMSSignedData;
 import org.bouncycastle.cms.SignerInformation;
-import org.bouncycastle.util.Selector;
 import org.bouncycastle.util.Store;
 
 /**
@@ -184,11 +183,10 @@ public class CertInformationCollector
         Collection<SignerInformation> signers = signedData.getSignerInfos().getSigners();
         SignerInformation signerInformation = signers.iterator().next();
 
-        @SuppressWarnings("unchecked")
         Store<X509CertificateHolder> certificatesStore = signedData.getCertificates();
         @SuppressWarnings("unchecked")
-        Collection<X509CertificateHolder> matches = certificatesStore
-                .getMatches((Selector<X509CertificateHolder>) signerInformation.getSID());
+        Collection<X509CertificateHolder> matches =
+                certificatesStore.getMatches(signerInformation.getSID());
 
         X509Certificate certificate = getCertFromHolder(matches.iterator().next());
         certificateSet.add(certificate);
@@ -294,9 +292,8 @@ public class CertInformationCollector
         LOG.info("Get alternative issuer certificate from: " + certInfo.issuerUrl);
         try
         {
-            URL certUrl = new URL(certInfo.issuerUrl);
             CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
-            InputStream in = certUrl.openStream();
+            InputStream in = SigUtils.openURL(certInfo.issuerUrl);
 
             X509Certificate altIssuerCert = (X509Certificate) certFactory.generateCertificate(in);
             certificateSet.add(altIssuerCert);
@@ -405,7 +402,7 @@ public class CertInformationCollector
     /**
      * Data class to hold Signature, Certificate (and its chain(s)) and revocation Information
      */
-    public class CertSignatureInformation
+    public static class CertSignatureInformation
     {
         private X509Certificate certificate;
         private String signatureHash;

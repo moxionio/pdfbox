@@ -39,6 +39,8 @@ public class GlyphTable extends TTFTable
     
     private int cached = 0;
     
+    private HorizontalMetricsTable hmt = null;
+    
     /**
      * Don't even bother to cache huge fonts.
      */
@@ -75,6 +77,12 @@ public class GlyphTable extends TTFTable
 
         // we don't actually read the complete table here because it can contain tens of thousands of glyphs
         this.data = data;
+
+        // PDFBOX-5460: read hmtx table early to avoid deadlock if getGlyph() locks "data"
+        // and then locks TrueTypeFont to read this table, while another thread
+        // locks TrueTypeFont and then tries to lock "data"
+        hmt = font.getHorizontalMetrics();
+
         initialized = true;
     }
 
@@ -82,7 +90,10 @@ public class GlyphTable extends TTFTable
      * Returns all glyphs. This method can be very slow.
      *
      * @throws IOException If there is an error reading the data.
+     * @deprecated use {@link #getGlyph(int)} instead. This will be removed in 3.0. If you need this
+     * method, please create an issue in JIRA.
      */
+    @Deprecated
     public GlyphData[] getGlyphs() throws IOException
     {
         // PDFBOX-4219: synchronize on data because it is accessed by several threads
@@ -161,6 +172,8 @@ public class GlyphTable extends TTFTable
             return glyphs[gid];
         }
 
+        GlyphData glyph;
+
         // PDFBOX-4219: synchronize on data because it is accessed by several threads
         // when PDFBox is accessing a standard 14 font for the first time
         synchronized (data)
@@ -171,18 +184,23 @@ public class GlyphTable extends TTFTable
             if (offsets[gid] == offsets[gid + 1])
             {
                 // no outline
-                return null;
+                // PDFBOX-5135: can't return null, must return an empty glyph because
+                // sometimes this is used in a composite glyph.
+                glyph = new GlyphData();
+                glyph.initEmptyData();
             }
-            
-            // save
-            long currentPosition = data.getCurrentPosition();
+            else
+            {
+                // save
+                long currentPosition = data.getCurrentPosition();
 
-            data.seek(getOffset() + offsets[gid]);
+                data.seek(getOffset() + offsets[gid]);
 
-            GlyphData glyph = getGlyphData(gid);
+                glyph = getGlyphData(gid);
 
-            // restore
-            data.seek(currentPosition);
+                // restore
+                data.seek(currentPosition);
+            }
 
             if (glyphs != null && glyphs[gid] == null && cached < MAX_CACHED_GLYPHS)
             {
@@ -197,7 +215,6 @@ public class GlyphTable extends TTFTable
     private GlyphData getGlyphData(int gid) throws IOException
     {
         GlyphData glyph = new GlyphData();
-        HorizontalMetricsTable hmt = font.getHorizontalMetrics();
         int leftSideBearing = hmt == null ? 0 : hmt.getLeftSideBearing(gid);
         glyph.initData(this, data, leftSideBearing);
         // resolve composite glyph

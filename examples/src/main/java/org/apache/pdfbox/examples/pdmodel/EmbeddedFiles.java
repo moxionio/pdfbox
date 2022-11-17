@@ -96,6 +96,7 @@ public class EmbeddedFiles
             // use both methods for backwards, cross-platform and cross-language compatibility.
             fs.setEmbeddedFile( ef );
             fs.setEmbeddedFileUnicode(ef);
+            fs.setFileDescription("Very interesting file");
 
             // create a new tree node and add the embedded file
             PDEmbeddedFilesNameTreeNode treeNode = new PDEmbeddedFilesNameTreeNode();
@@ -111,7 +112,6 @@ public class EmbeddedFiles
 
             // show attachments panel in some viewers 
             doc.getDocumentCatalog().setPageMode(PageMode.USE_ATTACHMENTS);
-
             doc.save( file );
         }
         finally

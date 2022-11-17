@@ -113,26 +113,35 @@ public class FDFField implements COSObjectable
      */
     public void writeXML(Writer output) throws IOException
     {
-        output.write("<field name=\"" + getPartialFieldName() + "\">\n");
+        output.write("<field name=\"");
+        output.write(getPartialFieldName());
+        output.write("\">\n");
+
         Object value = getValue();
 
         if (value instanceof String)
         {
-            output.write("<value>" + escapeXML((String) value) + "</value>\n");
+            output.write("<value>");
+            output.write(escapeXML((String) value));
+            output.write("</value>\n");
         }
         else if (value instanceof List)
         {
             List<String> items = (List<String>) value;
             for (String item : items)
             {
-                output.write("<value>" + escapeXML(item) + "</value>\n");
+                output.write("<value>");
+                output.write(escapeXML(item));
+                output.write("</value>\n");
             }
         }
 
         String rt = getRichText();
         if (rt != null)
         {
-            output.write("<value-richtext>" + escapeXML(rt) + "</value-richtext>\n");
+            output.write("<value-richtext>");
+            output.write(escapeXML(rt));
+            output.write("</value-richtext>\n");
         }
         List<FDFField> kids = getKids();
         if (kids != null)
@@ -168,7 +177,7 @@ public class FDFField implements COSObjectable
         List<FDFField> retval = null;
         if (kids != null)
         {
-            List<FDFField> actuals = new ArrayList<FDFField>();
+            List<FDFField> actuals = new ArrayList<FDFField>(kids.size());
             for (int i = 0; i < kids.size(); i++)
             {
                 actuals.add(new FDFField((COSDictionary) kids.getObject(i)));
@@ -658,7 +667,7 @@ public class FDFField implements COSObjectable
         COSArray array = (COSArray) field.getDictionaryObject(COSName.OPT);
         if (array != null)
         {
-            List<Object> objects = new ArrayList<Object>();
+            List<Object> objects = new ArrayList<Object>(array.size());
             for (int i = 0; i < array.size(); i++)
             {
                 COSBase next = array.getObject(i);

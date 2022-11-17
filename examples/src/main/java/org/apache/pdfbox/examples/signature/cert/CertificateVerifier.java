@@ -21,7 +21,6 @@ package org.apache.pdfbox.examples.signature.cert;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.security.GeneralSecurityException;
 import java.security.InvalidKeyException;
 import java.security.PublicKey;
@@ -47,6 +46,7 @@ import java.util.HashSet;
 import java.util.Set;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.pdfbox.examples.signature.SigUtils;
 import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.encryption.SecurityProvider;
 import org.bouncycastle.asn1.ASN1Encodable;
@@ -113,14 +113,15 @@ public final class CertificateVerifier
                 throw new CertificateVerificationException("The certificate is self-signed.");
             }
 
-            Set<X509Certificate> certSet = new HashSet<X509Certificate>();
-            certSet.addAll(additionalCerts);
+            Set<X509Certificate> certSet = new HashSet<X509Certificate>(additionalCerts);
 
             // Download extra certificates. However, each downloaded certificate can lead to
             // more extra certificates, e.g. with the file from PDFBOX-4091, which has
             // an incomplete chain.
+            // You can skip this block if you know that the certificate chain is complete
             Set<X509Certificate> certsToTrySet = new HashSet<X509Certificate>();
             certsToTrySet.add(cert);
+            certsToTrySet.addAll(additionalCerts);
             int downloadSize = 0;
             while (!certsToTrySet.isEmpty())
             {
@@ -141,7 +142,6 @@ public final class CertificateVerifier
                 }
                 certsToTrySet = nextCertsToTrySet;
             }
-
             if (downloadSize > 0)
             {
                 LOG.info("CA issuers: " + downloadSize + " downloaded certificate(s) are new");
@@ -208,23 +208,26 @@ public final class CertificateVerifier
             // root, we're done
             return;
         }
-        X509Certificate issuerCert = null;
         for (X509Certificate additionalCert : additionalCerts)
         {
             try
             {
                 cert.verify(additionalCert.getPublicKey(), SecurityProvider.getProvider().getName());
-                issuerCert = additionalCert;
-                break;
+                checkRevocationsWithIssuer(cert, additionalCert, additionalCerts, signDate);
+                // there can be several issuers
             }
             catch (GeneralSecurityException ex)
             {
                 // not the issuer
             }
-        }
-        // issuerCert is never null here. If it hadn't been found, then there wouldn't be a 
-        // verifiedCertChain earlier.
+        }        
+    }
 
+    private static void checkRevocationsWithIssuer(X509Certificate cert, X509Certificate issuerCert,
+            Set<X509Certificate> additionalCerts, Date signDate)
+            throws CertificateVerificationException, IOException, RevokedCertificateException,
+            GeneralSecurityException, OCSPException
+    {
         // Try checking the certificate through OCSP (faster than CRL)
         String ocspURL = extractOCSPURL(cert);
         if (ocspURL != null)
@@ -349,7 +352,7 @@ public final class CertificateVerifier
             try
             {
                 LOG.info("CA issuers URL: " + urlString);
-                in = new URL(urlString).openStream();
+                in = SigUtils.openURL(urlString);
                 CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
                 Collection<? extends Certificate> altCerts = certFactory.generateCertificates(in);
                 for (Certificate altCert : altCerts)

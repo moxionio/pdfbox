@@ -272,7 +272,7 @@ public final class TTFSubsetter
     {
         return nr.getPlatformId() == NameRecord.PLATFORM_WINDOWS
                 && nr.getPlatformEncodingId() == NameRecord.ENCODING_WINDOWS_UNICODE_BMP
-                && nr.getLanguageId() == NameRecord.LANGUGAE_WINDOWS_EN_US
+                && nr.getLanguageId() == NameRecord.LANGUAGE_WINDOWS_EN_US
                 && nr.getNameId() >= 0 && nr.getNameId() < 7;
     }
 
@@ -478,10 +478,10 @@ public final class TTFSubsetter
         hasAddedCompoundReferences = true;
 
         boolean hasNested;
-        do
-        {
-            GlyphTable g = ttf.getGlyph();
+        GlyphTable g = ttf.getGlyph();
             long[] offsets = ttf.getIndexToLocation().getOffsets();
+            do
+        {
             InputStream is = ttf.getOriginalData();
             Set<Integer> glyphIdsToAdd = null;
             try
@@ -600,10 +600,7 @@ public final class TTFSubsetter
 
                         // glyphIndex
                         int componentGid = (buf[off] & 0xff) << 8 | buf[off + 1] & 0xff;
-                        if (!glyphIds.contains(componentGid))
-                        {
-                            glyphIds.add(componentGid);
-                        }
+                        glyphIds.add(componentGid);
 
                         int newComponentGid = getNewGlyphId(componentGid);
                         buf[off]   = (byte)(newComponentGid >>> 8);
@@ -715,8 +712,8 @@ public final class TTFSubsetter
 
         // +1 because .notdef is missing in uniToGID
         int[] startCode = new int[uniToGID.size()+1];
-        int[] endCode = new int[uniToGID.size()+1];
-        int[] idDelta = new int[uniToGID.size()+1];
+        int[] endCode = new int[startCode.length];
+        int[] idDelta = new int[startCode.length];
         int segCount = 0;
         while(it.hasNext())
         {
@@ -879,11 +876,7 @@ public final class TTFSubsetter
         // more info: https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6hmtx.html
         int lastgid = h.getNumberOfHMetrics() - 1;
         // true if lastgid is not in the set: we'll need its width (but not its left side bearing) later
-        boolean needLastGidWidth = false;
-        if (glyphIds.last() > lastgid && !glyphIds.contains(lastgid))
-        {
-            needLastGidWidth = true;
-        }
+        boolean needLastGidWidth = glyphIds.last() > lastgid && !glyphIds.contains(lastgid);
 
         try
         {
@@ -1094,6 +1087,6 @@ public final class TTFSubsetter
 
     private int log2(int num)
     {
-        return (int)Math.round(Math.log(num) / Math.log(2));
+        return (int) Math.floor(Math.log(num) / Math.log(2));
     }
 }

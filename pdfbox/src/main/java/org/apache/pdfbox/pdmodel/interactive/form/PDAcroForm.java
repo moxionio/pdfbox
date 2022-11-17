@@ -16,6 +16,9 @@
  */
 package org.apache.pdfbox.pdmodel.interactive.form;
 
+import java.awt.geom.GeneralPath;
+import java.awt.geom.Rectangle2D;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -37,6 +40,7 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode;
+import org.apache.pdfbox.pdmodel.PDPageTree;
 import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.common.COSArrayList;
 import org.apache.pdfbox.pdmodel.common.COSObjectable;
@@ -45,8 +49,6 @@ import org.apache.pdfbox.pdmodel.fdf.FDFCatalog;
 import org.apache.pdfbox.pdmodel.fdf.FDFDictionary;
 import org.apache.pdfbox.pdmodel.fdf.FDFDocument;
 import org.apache.pdfbox.pdmodel.fdf.FDFField;
-import org.apache.pdfbox.pdmodel.font.PDType1Font;
-import org.apache.pdfbox.pdmodel.graphics.PDXObject;
 import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
@@ -61,14 +63,16 @@ import org.apache.pdfbox.util.Matrix;
 public final class PDAcroForm implements COSObjectable
 {
     private static final Log LOG = LogFactory.getLog(PDAcroForm.class);
-    
+
     private static final int FLAG_SIGNATURES_EXIST = 1;
     private static final int FLAG_APPEND_ONLY = 1 << 1;
 
     private final PDDocument document;
     private final COSDictionary dictionary;
-    
+
     private Map<String, PDField> fieldCache;
+
+    private ScriptingHandler scriptingHandler;
 
     /**
      * Constructor.
@@ -92,63 +96,7 @@ public final class PDAcroForm implements COSObjectable
     {
         document = doc;
         dictionary = form;
-        verifyOrCreateDefaults();
     }
-    
-    /*
-     * Verify that there are default entries for required 
-     * properties.
-     * 
-     * If these are missing create default entries similar to
-     * Adobe Reader / Adobe Acrobat
-     *  
-     */
-    private void verifyOrCreateDefaults()
-    {
-        final String adobeDefaultAppearanceString = "/Helv 0 Tf 0 g ";
-
-        // DA entry is required
-        if (getDefaultAppearance().length() == 0)
-        {
-            setDefaultAppearance(adobeDefaultAppearanceString);
-            dictionary.setNeedToBeUpdated(true);
-        }
-
-        // DR entry is required
-        PDResources defaultResources = getDefaultResources();
-        if (defaultResources == null)
-        {
-            defaultResources = new PDResources();
-            setDefaultResources(defaultResources);
-            dictionary.setNeedToBeUpdated(true);
-        }
-
-        // PDFBOX-3732: Adobe Acrobat uses Helvetica as a default font and 
-        // stores that under the name '/Helv' in the resources dictionary
-        // Zapf Dingbats is included per default for check boxes and 
-        // radio buttons as /ZaDb.
-        // PDFBOX-4393: the two fonts are added by Adobe when signing
-        // and this breaks a previous signature. (Might be an Adobe bug)
-        COSDictionary fontDict = defaultResources.getCOSObject().getCOSDictionary(COSName.FONT);
-        if (fontDict == null)
-        {
-            fontDict = new COSDictionary();
-            defaultResources.getCOSObject().setItem(COSName.FONT, fontDict);
-        }
-        if (!fontDict.containsKey(COSName.HELV))
-        {
-            defaultResources.put(COSName.HELV, PDType1Font.HELVETICA);
-            defaultResources.getCOSObject().setNeedToBeUpdated(true);
-            fontDict.setNeedToBeUpdated(true);
-        }
-        if (!fontDict.containsKey(COSName.ZA_DB))
-        {
-            defaultResources.put(COSName.ZA_DB, PDType1Font.ZAPF_DINGBATS);
-            defaultResources.getCOSObject().setNeedToBeUpdated(true);
-            fontDict.setNeedToBeUpdated(true);
-        }
-    }
-    
 
     /**
      * This will get the document associated with this form.
@@ -159,7 +107,7 @@ public final class PDAcroForm implements COSObjectable
     {
         return document;
     }
-    
+
     @Override
     public COSDictionary getCOSObject()
     {
@@ -204,15 +152,15 @@ public final class PDAcroForm implements COSObjectable
         FDFDictionary fdfDict = new FDFDictionary();
         catalog.setFDF(fdfDict);
 
-        List<FDFField> fdfFields = new ArrayList<FDFField>();
         List<PDField> fields = getFields();
+        List<FDFField> fdfFields = new ArrayList<FDFField>(fields.size());
         for (PDField field : fields)
         {
             fdfFields.add(field.exportFDF());
         }
-        
+
         fdfDict.setID(document.getDocument().getDocumentID());
-        
+
         if (!fdfFields.isEmpty())
         {
             fdfDict.setFields(fdfFields);
@@ -242,7 +190,7 @@ public final class PDAcroForm implements COSObjectable
             LOG.warn("Flatten for a dynamix XFA form is not supported");
             return;
         }
-        
+
         List<PDField> fields = new ArrayList<PDField>();
         for (PDField field: getFieldTree())
         {
@@ -250,8 +198,8 @@ public final class PDAcroForm implements COSObjectable
         }
         flatten(fields, false);
     }
-    
-    
+
+
     /**
      * This will flatten the specified form fields.
      * 
@@ -272,7 +220,7 @@ public final class PDAcroForm implements COSObjectable
         {
             return;
         }
-        
+
         if (!refreshAppearances && getNeedAppearances())
         {
             LOG.warn("acroForm.getNeedAppearances() returns true, " +
@@ -288,110 +236,77 @@ public final class PDAcroForm implements COSObjectable
             LOG.warn("Flatten for a dynamix XFA form is not supported");
             return;
         }
-        
+
         // refresh the appearances if set
         if (refreshAppearances)
         {
             refreshAppearances(fields);
         }
 
-        // the content stream to write to
-        PDPageContentStream contentStream;
-
         // get the widgets per page
-        Map<COSDictionary,Set<COSDictionary>> pagesWidgetsMap = buildPagesWidgetsMap(fields);
-        
+        PDPageTree pages = document.getPages();
+        Map<COSDictionary,Set<COSDictionary>> pagesWidgetsMap = buildPagesWidgetsMap(fields, pages);
+
         // preserve all non widget annotations
-        for (PDPage page : document.getPages())
+        for (PDPage page : pages)
         {
             Set<COSDictionary> widgetsForPageMap = pagesWidgetsMap.get(page.getCOSObject());
 
             // indicates if the original content stream
             // has been wrapped in a q...Q pair.
             boolean isContentStreamWrapped = false;
-            
+
             List<PDAnnotation> annotations = new ArrayList<PDAnnotation>();
-            
+
             for (PDAnnotation annotation: page.getAnnotations())
             {
                 if (widgetsForPageMap == null || !widgetsForPageMap.contains(annotation.getCOSObject()))
                 {
-                    annotations.add(annotation);                 
+                    annotations.add(annotation);
                 }
                 else if (isVisibleAnnotation(annotation))
                 {
-                    contentStream = new PDPageContentStream(document, page, AppendMode.APPEND, true, !isContentStreamWrapped);
-                    isContentStreamWrapped = true;
-                    
-                    PDAppearanceStream appearanceStream = annotation.getNormalAppearanceStream();
-                    
-                    PDFormXObject fieldObject = new PDFormXObject(appearanceStream.getCOSObject());
-                    
-                    contentStream.saveGraphicsState();
-                    
-                    // translate the appearance stream to the widget location if there is 
-                    // not already a transformation in place
-                    boolean needsTranslation = resolveNeedsTranslation(appearanceStream);
-
-                    // scale the appearance stream - mainly needed for images
-                    // in buttons and signatures
-                    boolean needsScaling = resolveNeedsScaling(annotation, page.getRotation());
-
-                    Matrix transformationMatrix = new Matrix();
-                    boolean transformed = false;
-                    
-                    if (needsTranslation)
+                    PDPageContentStream contentStream = new PDPageContentStream(
+                            document, page, AppendMode.APPEND, true, !isContentStreamWrapped);
+                    try
                     {
-                        transformationMatrix.translate(annotation.getRectangle().getLowerLeftX(),
-                                annotation.getRectangle().getLowerLeftY());
-                        transformed = true;
-                    }
+                        isContentStreamWrapped = true;
 
-                    // PDFBOX-4693: field could have a rotation matrix
-                    Matrix m = appearanceStream.getMatrix();
-                    int angle = (int) Math.round(Math.toDegrees(Math.atan2(m.getShearY(), m.getScaleY())));
-                    int rotation = (angle + 360) % 360;
+                        PDAppearanceStream appearanceStream = annotation.getNormalAppearanceStream();
 
-                    if (needsScaling)
-                    {
-                        PDRectangle bbox = appearanceStream.getBBox();
-                        PDRectangle fieldRect = annotation.getRectangle();
+                        PDFormXObject fieldObject = new PDFormXObject(appearanceStream.getCOSObject());
 
-                        float xScale;
-                        float yScale;
-                        if (rotation == 90 || rotation == 270)
-                        {
-                            xScale = fieldRect.getWidth() / bbox.getHeight();
-                            yScale = fieldRect.getHeight() / bbox.getWidth();
-                        }
-                        else
-                        {
-                            xScale = fieldRect.getWidth() / bbox.getWidth();
-                            yScale = fieldRect.getHeight() / bbox.getHeight();
-                        }
-                        Matrix scalingMatrix = Matrix.getScaleInstance(xScale, yScale);
-                        transformationMatrix.concatenate(scalingMatrix);
-                        transformed = true;
-                    }
+                        contentStream.saveGraphicsState();
 
-                    if (transformed)
-                    {
+                        // see https://stackoverflow.com/a/54091766/1729265 for an explanation
+                        // of the steps required
+                        // this will transform the appearance stream form object into the rectangle of the
+                        // annotation bbox and map the coordinate systems
+                        Matrix transformationMatrix = resolveTransformationMatrix(annotation, appearanceStream);
                         contentStream.transform(transformationMatrix);
+                        contentStream.drawForm(fieldObject);
+                        contentStream.restoreGraphicsState();
                     }
-                    
-                    contentStream.drawForm(fieldObject);
-                    contentStream.restoreGraphicsState();
-                    contentStream.close();
+                    finally
+                    {
+                        contentStream.close();
+                    }
                 }
             }
             page.setAnnotations(annotations);
         }
-        
+
         // remove the fields
         removeFields(fields);
-        
+
         // remove XFA for hybrid forms
         dictionary.removeItem(COSName.XFA);
+
+        // remove SigFlags if no signature left
+        if (this.document.getSignatureDictionaries().isEmpty())
+        {
+            this.getCOSObject().removeItem(COSName.SIG_FLAGS);
+        }
     }
 
     private boolean isVisibleAnnotation(PDAnnotation annotation)
@@ -443,8 +358,8 @@ public final class PDAcroForm implements COSObjectable
             }
         }
     }
-    
-    
+
+
     /**
      * This will return all of the documents root fields.
      * 
@@ -460,7 +375,7 @@ public final class PDAcroForm implements COSObjectable
      */
     public List<PDField> getFields()
     {
-        COSArray cosFields = (COSArray) dictionary.getDictionaryObject(COSName.FIELDS);
+        COSArray cosFields = dictionary.getCOSArray(COSName.FIELDS);
         if (cosFields == null)
         {
             return Collections.emptyList();
@@ -468,10 +383,10 @@ public final class PDAcroForm implements COSObjectable
         List<PDField> pdFields = new ArrayList<PDField>();
         for (int i = 0; i < cosFields.size(); i++)
         {
-            COSDictionary element = (COSDictionary) cosFields.getObject(i);
-            if (element != null)
+            COSBase element = cosFields.getObject(i);
+            if (element instanceof COSDictionary)
             {
-                PDField field = PDField.fromDictionary(this, element, null);
+                PDField field = PDField.fromDictionary(this, (COSDictionary) element, null);
                 if (field != null)
                 {
                     pdFields.add(field);
@@ -490,7 +405,7 @@ public final class PDAcroForm implements COSObjectable
     {
         dictionary.setItem(COSName.FIELDS, COSArrayList.converterToCOSArray(fields));
     }
-    
+
     /**
      * Returns an iterator which walks all fields in the field tree, in order.
      */
@@ -505,8 +420,8 @@ public final class PDAcroForm implements COSObjectable
     public PDFieldTree getFieldTree()
     {
         return new PDFieldTree(this);
-    }    
-    
+    }
+
     /**
      * This will tell this form to cache the fields into a Map structure
      * for fast access via the getField method.  The default is false.  You would
@@ -564,7 +479,7 @@ public final class PDAcroForm implements COSObjectable
                 return field;
             }
         }
-        
+
         return null;
     }
 
@@ -609,7 +524,7 @@ public final class PDAcroForm implements COSObjectable
     {
         dictionary.setBoolean(COSName.NEED_APPEARANCES, value);
     }
-    
+
     /**
      * This will get the default resources for the AcroForm.
      *
@@ -655,7 +570,7 @@ public final class PDAcroForm implements COSObjectable
     {
         return hasXFA() && getFields().isEmpty();
     }
-    
+
     /**
      * Get the XFA resource, the XFA resource is only used for PDF 1.5+ forms.
      *
@@ -681,7 +596,7 @@ public final class PDAcroForm implements COSObjectable
     {
         dictionary.setItem(COSName.XFA, xfa);
     }
-    
+
     /**
      * This will get the document-wide default value for the quadding/justification of variable text
      * fields. 
@@ -754,88 +669,64 @@ public final class PDAcroForm implements COSObjectable
     {
         dictionary.setFlag(COSName.SIG_FLAGS, FLAG_APPEND_ONLY, appendOnly);
     }
-    
+
     /**
-     * Check if there is a translation needed to place the annotations content.
+     * Set a handler to support JavaScript actions in the form.
+     * 
+     * @return scriptingHandler
+     */
+    public ScriptingHandler getScriptingHandler()
+    {
+        return scriptingHandler;
+    }
+
+    /**
+     * Set a handler to support JavaScript actions in the form.
+     * 
+     * @param scriptingHandler
+     */
+    public void setScriptingHandler(ScriptingHandler scriptingHandler)
+    {
+        this.scriptingHandler = scriptingHandler;
+    }
+
+    private Matrix resolveTransformationMatrix(PDAnnotation annotation, PDAppearanceStream appearanceStream)
+    {
+        // 1st step transform appearance stream bbox with appearance stream matrix
+        Rectangle2D transformedAppearanceBox = getTransformedAppearanceBBox(appearanceStream);
+        PDRectangle annotationRect = annotation.getRectangle();
+
+        // 2nd step caclulate matrix to transform calculated rectangle into the annotation Rect boundaries
+        Matrix transformationMatrix = new Matrix();
+        transformationMatrix.translate((float) (annotationRect.getLowerLeftX()-transformedAppearanceBox.getX()), (float) (annotationRect.getLowerLeftY()-transformedAppearanceBox.getY()));
+        transformationMatrix.scale((float) (annotationRect.getWidth()/transformedAppearanceBox.getWidth()), (float) (annotationRect.getHeight()/transformedAppearanceBox.getHeight()));
+        return transformationMatrix;
+    }
+
+    /**
+     * Calculate the transformed appearance box.
+     * 
+     * Apply the Matrix (or an identity transform) to the BBox of
+     * the appearance stream
      * 
      * @param appearanceStream
-     * @return the need for a translation transformation.
+     * @return the transformed rectangle
      */
-    private boolean resolveNeedsTranslation(PDAppearanceStream appearanceStream)
+    private Rectangle2D getTransformedAppearanceBBox(PDAppearanceStream appearanceStream)
     {
-        boolean needsTranslation = true;
-
-        PDResources resources = appearanceStream.getResources();
-        if (resources != null && resources.getXObjectNames().iterator().hasNext())
-        {
-            Iterator<COSName> xObjectNames = resources.getXObjectNames().iterator();
-
-            while (xObjectNames.hasNext())
-            {
-                try
-                {
-                    // if the BBox of the PDFormXObject does not start at 0,0
-                    // there is no need do translate as this is done by the BBox definition.
-                    PDXObject xObject = resources.getXObject(xObjectNames.next());
-                    if (xObject instanceof PDFormXObject)
-                    {
-                        PDRectangle bbox = ((PDFormXObject)xObject).getBBox();
-                        float llX = bbox.getLowerLeftX();
-                        float llY = bbox.getLowerLeftY();
-                        if (Float.compare(llX, 0) != 0 && Float.compare(llY, 0) != 0)
-                        {
-                            needsTranslation = false;
-                        }
-                    }
-                }
-                catch (IOException e)
-                {
-                    // we can safely ignore the exception here
-                    // as this might only cause a misplacement
-                }
-            }
-            return needsTranslation;
-        }
-        
-        return true;
-    }
-    
-    /**
-     * Check if there needs to be a scaling transformation applied.
-     * 
-     * @param annotation
-     * @param rotation 
-     * @return the need for a scaling transformation.
-     */    
-    private boolean resolveNeedsScaling(PDAnnotation annotation, int rotation)
-    {
-        PDAppearanceStream appearanceStream = annotation.getNormalAppearanceStream();
-        // Check if there is a transformation within the XObjects content
-        PDResources resources = appearanceStream.getResources();
-        if (resources != null && resources.getXObjectNames().iterator().hasNext())
-        {
-            return true;
-        }
-        PDRectangle bbox = appearanceStream.getBBox();
-        PDRectangle fieldRect = annotation.getRectangle();
-        if (rotation == 90 || rotation == 270)
-        {
-            return Float.compare(bbox.getWidth(),  fieldRect.getHeight()) != 0 ||
-                   Float.compare(bbox.getHeight(), fieldRect.getWidth()) != 0;
-        }
-        else
-        {
-            return Float.compare(bbox.getWidth(),  fieldRect.getWidth()) != 0 ||
-                   Float.compare(bbox.getHeight(), fieldRect.getHeight()) != 0;
-        }
+        Matrix appearanceStreamMatrix = appearanceStream.getMatrix();
+        PDRectangle appearanceStreamBBox = appearanceStream.getBBox();
+        GeneralPath transformedAppearanceBox = appearanceStreamBBox.transform(appearanceStreamMatrix);
+        return transformedAppearanceBox.getBounds2D();
     }
 
-    private Map<COSDictionary,Set<COSDictionary>> buildPagesWidgetsMap(List<PDField> fields) throws IOException
+    private Map<COSDictionary,Set<COSDictionary>> buildPagesWidgetsMap(
+            List<PDField> fields, PDPageTree pages) throws IOException
     {
         Map<COSDictionary,Set<COSDictionary>> pagesAnnotationsMap =
                 new HashMap<COSDictionary, Set<COSDictionary>>();
         boolean hasMissingPageRef = false;
-        
+
         for (PDField field : fields)
         {
             List<PDAnnotationWidget> widgets = field.getWidgets();
@@ -861,7 +752,7 @@ public final class PDAcroForm implements COSObjectable
         // If there is a widget with a missing page reference we need to build the map reverse i.e. 
         // from the annotations to the widget.
         LOG.warn("There has been a widget with a missing page reference, will check all page annotations");
-        for (PDPage page : document.getPages())
+        for (PDPage page : pages)
         {
             for (PDAnnotation annotation : page.getAnnotations())
             {
@@ -878,15 +769,15 @@ public final class PDAcroForm implements COSObjectable
     private void fillPagesAnnotationMap(Map<COSDictionary, Set<COSDictionary>> pagesAnnotationsMap,
             PDPage page, PDAnnotationWidget widget)
     {
-        if (pagesAnnotationsMap.get(page.getCOSObject()) == null)
+        Set<COSDictionary> widgetsForPage = pagesAnnotationsMap.get(page.getCOSObject());
+        if (widgetsForPage == null)
         {
-            Set<COSDictionary> widgetsForPage = new HashSet<COSDictionary>();
+            widgetsForPage = new HashSet<COSDictionary>();
             widgetsForPage.add(widget.getCOSObject());
             pagesAnnotationsMap.put(page.getCOSObject(), widgetsForPage);
         }
         else
         {
-            Set<COSDictionary> widgetsForPage = pagesAnnotationsMap.get(page.getCOSObject());
             widgetsForPage.add(widget.getCOSObject());
         }
     }

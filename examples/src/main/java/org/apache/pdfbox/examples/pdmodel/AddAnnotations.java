@@ -109,7 +109,10 @@ public final class AddAnnotations
             PDAnnotationTextMarkup txtMark = new PDAnnotationTextMarkup(
                     PDAnnotationTextMarkup.SUB_TYPE_HIGHLIGHT);
             txtMark.setColor(blue);
-            txtMark.setConstantOpacity((float)0.2); // 20% transparent
+            
+            // remove line below if PDF/A-2b (and possibly other PDF-A flavours)
+            // also add txtMark.setPrinted(true)
+            txtMark.setConstantOpacity((float) 0.2); // 20% transparent
 
             // Set the rectangle containing the markup
             float textWidth = font.getStringWidth("PDFBox") / 1000 * 18;
@@ -202,7 +205,7 @@ public final class AddAnnotations
             position = new PDRectangle(); // Reuse the variable, but note it's a new object!
             position.setLowerLeftX(2 * INCH);  // 1" in + width of circle
             position.setLowerLeftY(ph - 3.5f * INCH - INCH); // 1" height, 3.5" down
-            position.setUpperRightX(pw - INCH-INCH); // 1" in from right, and width of square
+            position.setUpperRightX(pw - INCH - INCH); // 1" in from right, and width of square
             position.setUpperRightY(ph - 3 * INCH); // 3" down (top of circle)
             aLine.setRectangle(position);
 
@@ -210,15 +213,14 @@ public final class AddAnnotations
             float[] linepos = new float[4];
             linepos[0] = 2 * INCH;  // x1 = rhs of circle
             linepos[1] = ph - 3.5f * INCH; // y1 halfway down circle
-            linepos[2] = pw- 2 * INCH;  // x2 = lhs of square
-            linepos[3] = ph- 4 * INCH; // y2 halfway down square
+            linepos[2] = pw - 2 * INCH;  // x2 = lhs of square
+            linepos[3] = ph - 4 * INCH; // y2 halfway down square
             aLine.setLine(linepos);
 
             aLine.setBorderStyle(borderThick);
             aLine.setColor(black);
             annotations.add(aLine);
-            
-            
+
             // Now add the link annotation, so the click on "Jump to page three" works
             PDAnnotationLink pageLink = new PDAnnotationLink();
             pageLink.setBorderStyle(borderULine);
@@ -303,9 +305,11 @@ public final class AddAnnotations
             // Create the appearance streams.
             // Adobe Reader will always display annotations without appearance streams nicely,
             // but other applications may not.
+            // Pass the PDDocument so that the appearance handler can look into the default resources
+            // for non-standard fonts.
             for (PDAnnotation ann : annotations)
             {
-                ann.constructAppearances();
+                ann.constructAppearances(document);
             }
 
             showPageNo(document, page1, "Page 1");

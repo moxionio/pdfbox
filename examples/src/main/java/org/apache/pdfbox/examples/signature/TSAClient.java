@@ -24,6 +24,7 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Random;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -52,6 +53,9 @@ public class TSAClient
     private final String password;
     private final MessageDigest digest;
 
+    // SecureRandom.getInstanceStrong() would be better, but sometimes blocks on Linux
+    private static final Random RANDOM = new SecureRandom();
+
     /**
      *
      * @param url the URL of the TSA service
@@ -69,19 +73,18 @@ public class TSAClient
 
     /**
      *
-     * @param messageImprint imprint of message contents
-     * @return the encoded time stamp token
+     * @param content
+     * @return the time stamp token
      * @throws IOException if there was an error with the connection or data from the TSA server,
      *                     or if the time stamp response could not be validated
      */
-    public byte[] getTimeStampToken(byte[] messageImprint) throws IOException
+    public TimeStampToken getTimeStampToken(byte[] content) throws IOException
     {
         digest.reset();
-        byte[] hash = digest.digest(messageImprint);
+        byte[] hash = digest.digest(content);
 
         // 32-bit cryptographic nonce
-        SecureRandom random = new SecureRandom();
-        int nonce = random.nextInt();
+        int nonce = RANDOM.nextInt();
 
         // generate TSA request
         TimeStampRequestGenerator tsaGenerator = new TimeStampRequestGenerator();
@@ -102,9 +105,9 @@ public class TSAClient
         {
             throw new IOException(e);
         }
-        
-        TimeStampToken token = response.getTimeStampToken();
-        if (token == null)
+
+        TimeStampToken timeStampToken = response.getTimeStampToken();
+        if (timeStampToken == null)
         {
             // https://www.ietf.org/rfc/rfc3161.html#section-2.4.2
             throw new IOException("Response from " + url +
@@ -112,7 +115,7 @@ public class TSAClient
                     " (" + response.getStatusString() + ")");
         }
 
-        return token.getEncoded();
+        return timeStampToken;
     }
 
     // gets response data for the given encoded TimeStampRequest data
@@ -131,7 +134,9 @@ public class TSAClient
 
         if (username != null && password != null && !username.isEmpty() && !password.isEmpty())
         {
-            connection.setRequestProperty(username, password);
+            // See https://stackoverflow.com/questions/12732422/ (needs jdk8)
+            // or see implementation in 3.0
+            throw new UnsupportedOperationException("authentication not implemented yet");
         }
 
         // read response
@@ -140,6 +145,11 @@ public class TSAClient
         {
             output = connection.getOutputStream();
             output.write(request);
+        }
+        catch (IOException ex)
+        {
+            LOG.error("Exception when writing to " + this.url, ex);
+            throw ex;
         }
         finally
         {
@@ -154,6 +164,11 @@ public class TSAClient
         {
             input = connection.getInputStream();
             response = IOUtils.toByteArray(input);
+        }
+        catch (IOException ex)
+        {
+            LOG.error("Exception when reading from " + this.url, ex);
+            throw ex;
         }
         finally
         {

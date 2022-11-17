@@ -34,6 +34,7 @@ import org.apache.fontbox.ttf.TrueTypeFont;
 import org.apache.fontbox.util.BoundingBox;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.common.PDStream;
@@ -41,10 +42,10 @@ import org.apache.pdfbox.pdmodel.font.encoding.BuiltInEncoding;
 import org.apache.pdfbox.pdmodel.font.encoding.Encoding;
 import org.apache.pdfbox.pdmodel.font.encoding.GlyphList;
 import org.apache.pdfbox.pdmodel.font.encoding.MacOSRomanEncoding;
+import org.apache.pdfbox.pdmodel.font.encoding.MacRomanEncoding;
 import org.apache.pdfbox.pdmodel.font.encoding.StandardEncoding;
 import org.apache.pdfbox.pdmodel.font.encoding.Type1Encoding;
 import org.apache.pdfbox.pdmodel.font.encoding.WinAnsiEncoding;
-
 
 import static org.apache.pdfbox.pdmodel.font.UniUtil.getUniNameOfCodePoint;
 
@@ -191,16 +192,19 @@ public class PDTrueTypeFont extends PDSimpleFont implements PDVectorFont
             PDStream ff2Stream = fd.getFontFile2();
             if (ff2Stream != null)
             {
+                InputStream is = null;
                 try
                 {
                     // embedded
                     TTFParser ttfParser = new TTFParser(true);
-                    ttfFont = ttfParser.parse(ff2Stream.createInputStream());
+                    is = ff2Stream.createInputStream();
+                    ttfFont = ttfParser.parse(is);
                 }
                 catch (IOException e)
                 {
                     LOG.warn("Could not read embedded TTF for font " + getBaseFont(), e);
                     fontIsDamaged = true;
+                    IOUtils.closeQuietly(is);
                 }
             }
         }
@@ -587,6 +591,30 @@ public class PDTrueTypeFont extends PDSimpleFont implements PDVectorFont
         }
         else // symbolic
         {
+            // PDFBOX-4755 / PDF.js #5501
+            // PDFBOX-3965: fallback for font has that the symbol flag but isn't
+            if (gid == 0 && cmapWinUnicode != null)
+            {
+                if (encoding instanceof WinAnsiEncoding || encoding instanceof MacRomanEncoding)
+                {
+                    String name = encoding.getName(code);
+                    if (".notdef".equals(name))
+                    {
+                        return 0;
+                    }
+                    String unicode = GlyphList.getAdobeGlyphList().toUnicode(name);
+                    if (unicode != null)
+                    {
+                        int uni = unicode.codePointAt(0);
+                        gid = cmapWinUnicode.getGlyphId(uni);
+                    }
+                }
+                else
+                {
+                    gid = cmapWinUnicode.getGlyphId(code);
+                }
+            }
+
             // (3, 0) - (Windows, Symbol)
             if (cmapWinSymbol != null)
             {
@@ -619,30 +647,7 @@ public class PDTrueTypeFont extends PDSimpleFont implements PDVectorFont
             {
                 gid = cmapMacRoman.getGlyphId(code);
             }
-
-            // PDFBOX-4755 / PDF.js #5501
-            if (gid == 0 && cmapWinUnicode != null)
-            {
-                gid = cmapWinUnicode.getGlyphId(code);
-            }
-
-            // PDFBOX-3965: fallback for font has that the symbol flag but isn't
-            if (gid == 0 && cmapWinUnicode != null && encoding != null)
-            {
-                String name = encoding.getName(code);
-                if (".notdef".equals(name))
-                {
-                    return 0;
-                }
-                String unicode = GlyphList.getAdobeGlyphList().toUnicode(name);
-                if (unicode != null)
-                {
-                    int uni = unicode.codePointAt(0);
-                    gid = cmapWinUnicode.getGlyphId(uni);
-                }
-            }            
         }
-
         return gid;
     }
 
@@ -683,6 +688,12 @@ public class PDTrueTypeFont extends PDSimpleFont implements PDVectorFont
                         && CmapTable.ENCODING_UNICODE_1_0 == cmap.getPlatformEncodingId())
                 {
                     // PDFBOX-4755 / PDF.js #5501
+                    cmapWinUnicode = cmap;
+                }
+                else if (CmapTable.PLATFORM_UNICODE == cmap.getPlatformId()
+                        && CmapTable.ENCODING_UNICODE_2_0_BMP == cmap.getPlatformEncodingId())
+                {
+                    // PDFBOX-5484
                     cmapWinUnicode = cmap;
                 }
             }

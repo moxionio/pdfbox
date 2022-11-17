@@ -32,6 +32,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageTree;
 import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.graphics.blend.BlendMode;
@@ -76,6 +77,10 @@ public class PDFRenderer
 
     private static boolean kcmsLogged = false;
 
+    private float imageDownscalingOptimizationThreshold = 0.5f;
+
+    private final PDPageTree pageTree;
+
     /**
      * Creates a new PDFRenderer.
      * @param document the document to render
@@ -83,6 +88,7 @@ public class PDFRenderer
     public PDFRenderer(PDDocument document)
     {
         this.document = document;
+        this.pageTree = document.getPages();
 
         if (!kcmsLogged)
         {
@@ -180,6 +186,29 @@ public class PDFRenderer
     }
 
     /**
+     *
+     * @return get the image downscaling optimization threshold. See
+     * {@link #getImageDownscalingOptimizationThreshold()} for details.
+     */
+    public float getImageDownscalingOptimizationThreshold()
+    {
+        return imageDownscalingOptimizationThreshold;
+    }
+
+    /**
+     * Set the image downscaling optimization threshold. This must be a value between 0 and 1. When
+     * rendering downscaled images and rendering hints are set to bicubic+quality and the scaling is
+     * smaller than the threshold, a more quality-optimized but slower method will be used. The
+     * default is 0.5 which is a good compromise.
+     *
+     * @param imageDownscalingOptimizationThreshold
+     */
+    public void setImageDownscalingOptimizationThreshold(float imageDownscalingOptimizationThreshold)
+    {
+        this.imageDownscalingOptimizationThreshold = imageDownscalingOptimizationThreshold;
+    }
+
+    /**
      * Returns the given page as an RGB image at 72 DPI
      * @param pageIndex the zero-based index of the page to be converted.
      * @return the rendered page image
@@ -256,11 +285,11 @@ public class PDFRenderer
     public BufferedImage renderImage(int pageIndex, float scale, ImageType imageType, RenderDestination destination)
             throws IOException
     {
-        PDPage page = document.getPage(pageIndex);
+        PDPage page = pageTree.get(pageIndex);
 
-        PDRectangle cropbBox = page.getCropBox();
-        float widthPt = cropbBox.getWidth();
-        float heightPt = cropbBox.getHeight();
+        PDRectangle cropBox = page.getCropBox();
+        float widthPt = cropBox.getWidth();
+        float heightPt = cropBox.getHeight();
 
         // PDFBOX-4306 avoid single blank pixel line on the right or on the bottom
         int widthPx = (int) Math.max(Math.floor(widthPt * scale), 1);
@@ -269,20 +298,24 @@ public class PDFRenderer
         // PDFBOX-4518 the maximum size (w*h) of a buffered image is limited to Integer.MAX_VALUE
         if ((long) widthPx * (long) heightPx > Integer.MAX_VALUE)
         {
-            throw new IOException("Maximum size of image exceeded (w * h * scale) = "//
-                    + widthPt + " * " + heightPt + " * " + scale + " > " + Integer.MAX_VALUE);
+            throw new IOException("Maximum size of image exceeded (w * h * scale ^ 2) = "//
+                    + widthPt + " * " + heightPt + " * " + scale + " ^ 2 > " + Integer.MAX_VALUE);
         }
 
         int rotationAngle = page.getRotation();
 
-        int bimType = imageType.toBufferedImageType();
+        int bimType;
         if (imageType != ImageType.ARGB && hasBlendMode(page))
         {
             // PDFBOX-4095: if the PDF has blending on the top level, draw on transparent background
-            // Inpired from PDF.js: if a PDF page uses any blend modes other than Normal, 
+            // Inspired from PDF.js: if a PDF page uses any blend modes other than Normal, 
             // PDF.js renders everything on a fully transparent RGBA canvas. 
             // Finally when the page has been rendered, PDF.js draws the RGBA canvas on a white canvas.
             bimType = BufferedImage.TYPE_INT_ARGB;
+        }
+        else
+        {
+            bimType = imageType.toBufferedImageType();
         }
 
         // swap width and height
@@ -310,15 +343,16 @@ public class PDFRenderer
         }
         g.clearRect(0, 0, image.getWidth(), image.getHeight());
         
-        transform(g, page, scale, scale);
+        transform(g, page.getRotation(), cropBox, scale, scale);
 
         // the end-user may provide a custom PageDrawer
         RenderingHints actualRenderingHints =
                 renderingHints == null ? createDefaultRenderingHints(g) : renderingHints;
-        PageDrawerParameters parameters = new PageDrawerParameters(this, page, subsamplingAllowed,
-                                                                   destination, actualRenderingHints);
+        PageDrawerParameters parameters =
+                new PageDrawerParameters(this, page, subsamplingAllowed, destination,
+                        actualRenderingHints, imageDownscalingOptimizationThreshold);
         PageDrawer drawer = createPageDrawer(parameters);
-        drawer.drawPage(g, page.getCropBox());       
+        drawer.drawPage(g, cropBox);
         
         g.dispose();
 
@@ -414,19 +448,19 @@ public class PDFRenderer
     public void renderPageToGraphics(int pageIndex, Graphics2D graphics, float scaleX, float scaleY, RenderDestination destination)
             throws IOException
     {
-        PDPage page = document.getPage(pageIndex);
+        PDPage page = pageTree.get(pageIndex);
         // TODO need width/height calculations? should these be in PageDrawer?
 
-        transform(graphics, page, scaleX, scaleY);
-
         PDRectangle cropBox = page.getCropBox();
+        transform(graphics, page.getRotation(), cropBox, scaleX, scaleY);
         graphics.clearRect(0, 0, (int) cropBox.getWidth(), (int) cropBox.getHeight());
 
         // the end-user may provide a custom PageDrawer
         RenderingHints actualRenderingHints =
                 renderingHints == null ? createDefaultRenderingHints(graphics) : renderingHints;
-        PageDrawerParameters parameters = new PageDrawerParameters(this, page, subsamplingAllowed,
-                                                                   destination, actualRenderingHints);
+        PageDrawerParameters parameters =
+                new PageDrawerParameters(this, page, subsamplingAllowed, destination,
+                        actualRenderingHints, imageDownscalingOptimizationThreshold);
         PageDrawer drawer = createPageDrawer(parameters);
         drawer.drawPage(graphics, cropBox);
     }
@@ -443,14 +477,11 @@ public class PDFRenderer
     }
 
     // scale rotate translate
-    private void transform(Graphics2D graphics, PDPage page, float scaleX, float scaleY)
+    private void transform(Graphics2D graphics, int rotationAngle, PDRectangle cropBox, float scaleX, float scaleY)
     {
         graphics.scale(scaleX, scaleY);
 
         // TODO should we be passing the scale to PageDrawer rather than messing with Graphics?
-        int rotationAngle = page.getRotation();
-        PDRectangle cropBox = page.getCropBox();
-
         if (rotationAngle != 0)
         {
             float translateX = 0;
@@ -497,12 +528,13 @@ public class PDFRenderer
 
     private RenderingHints createDefaultRenderingHints(Graphics2D graphics)
     {
+        boolean isBitonal = isBitonal(graphics);
         RenderingHints r = new RenderingHints(null);
-        r.put(RenderingHints.KEY_INTERPOLATION, isBitonal(graphics) ?
+        r.put(RenderingHints.KEY_INTERPOLATION, isBitonal ?
                 RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR :
                 RenderingHints.VALUE_INTERPOLATION_BICUBIC);
         r.put(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        r.put(RenderingHints.KEY_ANTIALIASING, isBitonal(graphics) ?
+        r.put(RenderingHints.KEY_ANTIALIASING, isBitonal ?
                                         RenderingHints.VALUE_ANTIALIAS_OFF :
                                         RenderingHints.VALUE_ANTIALIAS_ON);
         return r;
@@ -529,16 +561,15 @@ public class PDFRenderer
         for (COSName name : resources.getExtGStateNames())
         {
             PDExtendedGraphicsState extGState = resources.getExtGState(name);
-            if (extGState == null)
+            if (extGState != null)
             {
-                // can happen if key exists but no value 
+                // extGState null can happen if key exists but no value 
                 // see PDFBOX-3950-23EGDHXSBBYQLKYOKGZUOVYVNE675PRD.pdf
-                continue;
-            }
-            BlendMode blendMode = extGState.getBlendMode();
-            if (blendMode != BlendMode.NORMAL)
-            {
-                return true;
+                BlendMode blendMode = extGState.getBlendMode();
+                if (blendMode != BlendMode.NORMAL)
+                {
+                    return true;
+                }
             }
         }
         return false;

@@ -19,10 +19,10 @@ package org.apache.pdfbox.pdmodel.interactive.form;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
 
 /**
  * Radio button fields contain a set of related buttons that can each be on or off.
@@ -44,7 +44,7 @@ public final class PDRadioButton extends PDButton
     public PDRadioButton(PDAcroForm acroForm)
     {
         super(acroForm);
-        setRadioButton(true);
+        getCOSObject().setFlag(COSName.FF, FLAG_RADIO, true);
     }
     
     /**
@@ -82,6 +82,31 @@ public final class PDRadioButton extends PDButton
     }
 
     /**
+     * This will get the selected index.
+     * <p>
+     * A RadioButton might have multiple same value options which are not selected jointly if
+     * they are not set in unison {@link #isRadiosInUnison()}.</p>
+     * 
+     * <p>
+     * The method will return the first selected index or -1 if no option is selected.</p>
+     * 
+     * @return the first selected index or -1.
+     */
+    public int getSelectedIndex()
+    {
+        int idx = 0;
+        for (PDAnnotationWidget widget : getWidgets())
+        {
+            if (!COSName.Off.equals(widget.getAppearanceState()))
+            {
+                return idx;
+            }
+            idx ++;
+        }
+        return -1;
+    }
+
+    /**
      * This will get the selected export values.
      * <p>
      * A RadioButton might have an export value to allow field values
@@ -98,7 +123,6 @@ public final class PDRadioButton extends PDButton
      */
     public List<String> getSelectedExportValues() throws IOException
     {
-        Set<String> onValues = getOnValues();
         List<String> exportValues = getExportValues();
         List<String> selectedExportValues = new ArrayList<String>();
         if (exportValues.isEmpty())
@@ -110,12 +134,13 @@ public final class PDRadioButton extends PDButton
         {
             String fieldValue = getValue();
             int idx = 0;
-            for (String onValue : onValues)
+            for (String onValue : getOnValues())
             {
                 if (onValue.compareTo(fieldValue) == 0)
                 {
                     selectedExportValues.add(exportValues.get(idx));
                 }
+                ++idx;
             }
             return selectedExportValues;
         }

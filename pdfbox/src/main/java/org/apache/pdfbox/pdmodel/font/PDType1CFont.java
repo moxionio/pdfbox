@@ -29,6 +29,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.fontbox.EncodedFont;
 import org.apache.fontbox.FontBoxFont;
+import org.apache.fontbox.cff.CFFFont;
 import org.apache.fontbox.cff.CFFParser;
 import org.apache.fontbox.cff.CFFType1Font;
 import org.apache.fontbox.util.BoundingBox;
@@ -99,7 +100,16 @@ public class PDType1CFont extends PDSimpleFont
             {
                 // note: this could be an OpenType file, fortunately CFFParser can handle that
                 CFFParser cffParser = new CFFParser();
-                cffEmbedded = (CFFType1Font)cffParser.parse(bytes, new FF3ByteSource()).get(0);
+                CFFFont parsedCffFont = cffParser.parse(bytes, new FF3ByteSource()).get(0);
+                if (parsedCffFont instanceof CFFType1Font)
+                {
+                    cffEmbedded = (CFFType1Font) parsedCffFont;
+                }
+                else
+                {
+                    LOG.error("Expected CFFType1Font, got " + parsedCffFont.getClass().getSimpleName());
+                    fontIsDamaged = true;
+                }
             }
         }
         catch (IOException e)
@@ -163,10 +173,19 @@ public class PDType1CFont extends PDSimpleFont
         {
             return new GeneralPath();
         }
-        else
+        if ("sfthyphen".equals(name))
         {
-            return genericFont.getPath(name);
+            return genericFont.getPath("hyphen");
         }
+        if ("nbspace".equals(name))
+        {
+            if (!hasGlyph("space"))
+            {
+                return new GeneralPath();
+            }
+            return genericFont.getPath("space");
+        }
+        return genericFont.getPath(name);
     }
 
     @Override
@@ -302,7 +321,12 @@ public class PDType1CFont extends PDSimpleFont
         float height;
         if (!glyphHeights.containsKey(name))
         {
-            height = (float)cffFont.getType1CharString(name).getBounds().getHeight(); // todo: cffFont could be null
+            if (cffFont == null)
+            {
+                LOG.warn("No embedded CFF font, returning 0");
+                return 0;
+            }
+            height = (float) cffFont.getType1CharString(name).getBounds().getHeight();
             glyphHeights.put(name, height);
         }
         else
@@ -340,6 +364,11 @@ public class PDType1CFont extends PDSimpleFont
     @Override
     public float getStringWidth(String string) throws IOException
     {
+        if (cffFont == null)
+        {
+            LOG.warn("No embedded CFF font, returning 0");
+            return 0;
+        }
         float width = 0;
         for (int i = 0; i < string.length(); i++)
         {
